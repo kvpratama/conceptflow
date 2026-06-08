@@ -90,9 +90,14 @@ Your job:
          and NOTHING else.
        - If `ok` is False and `kind` is "render": read `stderr`, edit
          `/scene.py` with `edit_file` to fix the problem, then call
-         `render_manim` again. You may retry AT MOST 3 times total. After
-         3 failed render attempts, return the last `stderr` to the
-         orchestrator and stop.
+         `render_manim` again. The render tool enforces a hard cap on the
+         number of attempts; once it is reached your next call returns
+         `kind` "exhausted" (see below). When you receive a "render"
+         failure, return the last `stderr` to the orchestrator and stop.
+       - If `ok` is False and `kind` is "exhausted": the retry budget is
+         used up and the tool refused to render again. Return the `message`
+         field along with the last `stderr` you saw, then stop. Do NOT call
+         `render_manim` again.
        - If `ok` is False and `kind` is "infra": stop immediately and
          return the `message` field verbatim. Do NOT retry.
        - If `ok` is False and `kind` is "logic": stop and report the

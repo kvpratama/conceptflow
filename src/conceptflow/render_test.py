@@ -231,6 +231,37 @@ async def test_attempt_counter_reflects_prior_tool_calls(tmp_path, monkeypatch):
     assert result["attempt"] == 3
 
 
+async def test_render_refuses_once_attempt_cap_exceeded(tmp_path, monkeypatch):
+    """When prior render attempts hit the cap, the tool short-circuits.
+
+    No sandbox is created and an 'exhausted' stop envelope is returned so
+    the cap is enforced in code, not merely advised in the prompt.
+    """
+    from conceptflow import render
+
+    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    sandbox_create = MagicMock()
+    monkeypatch.setattr(render.modal.Sandbox, "create", sandbox_create)
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    prior = ToolMessage(content="boom", name="render_manim", tool_call_id="x")
+    state = {
+        "files": {"/scene.py": {"content": "x", "encoding": "utf-8"}},
+        "messages": [prior, prior, prior],  # 3 prior render_manim calls (cap=3)
+    }
+    config: RunnableConfig = {"configurable": {"thread_id": "t"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is False
+    assert result["kind"] == "exhausted"
+    assert result["attempt"] == 4
+    # The cap is enforced before any Modal interaction.
+    sandbox_create.assert_not_called()
+
+
 async def test_render_returns_infra_error_when_sandbox_fails_to_start(monkeypatch):
     from conceptflow import render
 

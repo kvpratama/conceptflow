@@ -23,6 +23,8 @@ from langchain_core.tools import tool
 from langchain_modal import ModalSandbox
 from langgraph.prebuilt import InjectedState
 
+from conceptflow.config import get_settings
+
 # Pre-resolve and cache the system temp directory at import time, while no
 # asyncio event loop is running.
 #
@@ -99,6 +101,10 @@ async def render_manim(
         * Logic failure (missing `/scene.py` in agent state)::
 
               {"ok": False, "kind": "logic", "message": "..."}
+
+        * Exhausted retry budget (attempt exceeds ``max_render_attempts``)::
+
+              {"ok": False, "kind": "exhausted", "message": "...", "attempt": n}
     """
     # 1. Pull /scene.py out of agent state.
     files = state.get("files") or {}
@@ -118,8 +124,19 @@ async def render_manim(
     configurable = (config or {}).get("configurable") or {}
     thread_id: str = configurable.get("thread_id") or "default"
 
-    # 3. Compute attempt number from prior tool messages.
+    # 3. Compute attempt number from prior tool messages and enforce the cap.
     attempt: int = _count_prior_render_calls(state) + 1
+    max_attempts: int = get_settings().max_render_attempts
+    if attempt > max_attempts:
+        return {
+            "ok": False,
+            "kind": "exhausted",
+            "attempt": attempt,
+            "message": (
+                f"Render retry budget exhausted after {max_attempts} attempts. "
+                "Stop retrying and report the last render failure to the orchestrator."
+            ),
+        }
 
     # 4. Run the render.
     return await _run_render(

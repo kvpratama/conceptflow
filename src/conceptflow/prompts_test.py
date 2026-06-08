@@ -15,7 +15,8 @@ def test_script_writer_prompt_is_non_empty_string():
 
 def test_manim_coder_prompt_mentions_render_tool_and_retry_cap():
     assert "render_manim" in prompts.MANIM_CODER_PROMPT
-    assert "3" in prompts.MANIM_CODER_PROMPT  # retry cap documented
+    # The cap is enforced in code; the prompt documents the terminal envelope.
+    assert "exhausted" in prompts.MANIM_CODER_PROMPT
     assert "/scene.py" in prompts.MANIM_CODER_PROMPT
 
 

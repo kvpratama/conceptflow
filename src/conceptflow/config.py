@@ -70,6 +70,9 @@ class Settings(BaseSettings):
             project. Created on first use if missing.
         modal_sandbox_timeout: Hard wall-clock cap (seconds) on a single
             sandbox's lifetime. Defaults to 30 minutes.
+        max_render_attempts: Maximum number of ``render_manim`` attempts
+            allowed per run. Enforced in code by the render tool, not merely
+            advised in the manim-coder prompt.
         retry_max_retries: Maximum number of retries for ModelRetryMiddleware.
         retry_backoff_factor: Exponential backoff factor for ModelRetryMiddleware.
         retry_initial_delay: Initial delay (seconds) for ModelRetryMiddleware.
@@ -90,6 +93,7 @@ class Settings(BaseSettings):
     temperature: float = 0.0
     modal_app_name: str = "conceptflow"
     modal_sandbox_timeout: int = 60 * 30
+    max_render_attempts: int = 3
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0
