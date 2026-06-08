@@ -1,7 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    
+    "conceptflow": "./src/conceptflow/agent.py:graph"
   },
   "env": ".env"
 }
