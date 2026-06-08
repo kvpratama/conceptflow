@@ -137,6 +137,43 @@ async def test_render_success_writes_mp4_and_returns_path(tmp_path, monkeypatch)
     fake_modal_sb.terminate.assert_called_once()
 
 
+async def test_render_selects_final_mp4_not_partial_movie_file(tmp_path, monkeypatch):
+    """When `find` returns partial movie files alongside the final render,
+    the final `<SceneClass>.mp4` (outside partial_movie_files) is chosen."""
+    from conceptflow import render
+
+    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    fake_modal_sb = MagicMock()
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    # `find` lists a partial movie file BEFORE the final render — the old
+    # `candidates[0]` logic would have picked the partial.
+    fake_sandbox = _make_fake_sandbox(
+        find_stdout=(
+            "/work/media/videos/scene/480p15/partial_movie_files/Foo/abc123.mp4\n"
+            "/work/media/videos/scene/480p15/partial_movie_files/Foo/def456.mp4\n"
+            "/work/media/videos/scene/480p15/Foo.mp4\n"
+        ),
+    )
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {
+        "files": {"/scene.py": {"content": "from manim import *\n", "encoding": "utf-8"}},
+        "messages": [],
+    }
+    config: RunnableConfig = {"configurable": {"thread_id": "t-partial"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is True
+    # The final render — not a partial movie file — was downloaded.
+    downloaded = fake_sandbox.download_files.call_args.args[0]
+    assert downloaded == ["/work/media/videos/scene/480p15/Foo.mp4"]
+
+
 async def test_render_returns_render_error_on_nonzero_exit(tmp_path, monkeypatch):
     from conceptflow import render
 

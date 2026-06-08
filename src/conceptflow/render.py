@@ -141,6 +141,32 @@ def _count_prior_render_calls(state: dict[str, Any]) -> int:
     )
 
 
+def _select_final_mp4(candidates: list[str], scene_class: str) -> str | None:
+    """Pick the final rendered MP4 from a list of `find` results.
+
+    Manim leaves intermediate clips under ``partial_movie_files/`` in addition
+    to the final ``<SceneClass>.mp4``. This selects the final render and never
+    a partial.
+
+    Args:
+        candidates: Absolute MP4 paths found under the sandbox media dir.
+        scene_class: The scene class name whose final render we want.
+
+    Returns:
+        The path to the final render, or ``None`` if none qualifies.
+    """
+    final = [c for c in candidates if "partial_movie_files" not in c.split("/")]
+    if not final:
+        return None
+    # Prefer an exact ``<SceneClass>.mp4`` basename match; fall back to the
+    # first non-partial candidate.
+    target = f"{scene_class}.mp4"
+    for path in final:
+        if path.rsplit("/", 1)[-1] == target:
+            return path
+    return final[0]
+
+
 async def _run_render(
     *,
     source: str,
@@ -223,19 +249,21 @@ def _run_render_blocking(
                 "attempt": attempt,
             }
 
-        # Locate the produced MP4. Manim writes to
-        # /work/media/videos/scene/<quality>/<SceneClass>.mp4
+        # Locate the produced MP4. Manim writes the final render to
+        # /work/media/videos/scene/<quality>/<SceneClass>.mp4 and also leaves
+        # intermediate clips under .../partial_movie_files/<SceneClass>/*.mp4.
+        # We must pick the final render, never a partial.
         find = sandbox.execute("find /work/media -name '*.mp4' -type f")
         candidates = [line.strip() for line in find.output.splitlines() if line.strip()]
-        if not candidates:
+        remote_mp4 = _select_final_mp4(candidates, scene_class)
+        if remote_mp4 is None:
             return {
                 "ok": False,
                 "kind": "render",
-                "stderr": "Manim exited 0 but no .mp4 file was produced.",
+                "stderr": "Manim exited 0 but no final .mp4 file was produced.",
                 "stdout": exec_result.output,
                 "attempt": attempt,
             }
-        remote_mp4 = candidates[0]
 
         # Download.
         downloads = sandbox.download_files([remote_mp4])
