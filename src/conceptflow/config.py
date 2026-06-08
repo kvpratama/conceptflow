@@ -23,7 +23,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # NOTE: env loading is deliberately NOT performed at import time. Callers
@@ -52,6 +52,7 @@ def load_environment() -> None:
     user_config = Path.home() / ".config" / "conceptflow" / "config.env"
     if user_config.exists():
         load_dotenv(user_config, override=False)
+    get_settings.cache_clear()
 
 
 class Settings(BaseSettings):
@@ -93,7 +94,7 @@ class Settings(BaseSettings):
     temperature: float = 0.0
     modal_app_name: str = "conceptflow"
     modal_sandbox_timeout: int = 60 * 30
-    max_render_attempts: int = 3
+    max_render_attempts: int = Field(default=3, gt=0)
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0

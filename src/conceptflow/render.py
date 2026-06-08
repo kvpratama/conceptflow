@@ -11,6 +11,7 @@ codebase can be tested without touching the network.
 from __future__ import annotations
 
 import asyncio
+import re
 import tempfile
 from pathlib import Path
 from typing import Annotated, Any
@@ -43,12 +44,12 @@ tempfile.gettempdir()
 # the module can be imported in hermetic test environments. The actual
 # hydrated App used by `Sandbox.create` is fetched lazily inside
 # `_run_render` via `modal.App.lookup(..., create_if_missing=True)`.
-APP: modal.App = modal.App("conceptflow")
+APP: modal.App = modal.App(get_settings().modal_app_name)
 
 # Manim CE image. System packages are required for cairo/pango/ffmpeg;
 # texlive-latex-extra is included so `MathTex` works when needed.
 MANIM_IMAGE: modal.Image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image.debian_slim(python_version="3.13")
     .apt_install(
         "ffmpeg",
         "libcairo2-dev",
@@ -57,7 +58,7 @@ MANIM_IMAGE: modal.Image = (
         "texlive-fonts-recommended",
         "texlive-latex-extra",
     )
-    .pip_install("manim==0.18.1")
+    .uv_pip_install("manim")
 )
 
 # Hard wall-clock cap on a single render invocation.
@@ -69,6 +70,8 @@ _SANDBOX_TIMEOUT_SECONDS: int = 60 * 15
 
 # Where rendered MP4s are written on the local machine.
 _OUTPUTS_ROOT: Path = Path("./outputs")
+
+_SCENE_CLASS_RE: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @tool
@@ -120,9 +123,23 @@ async def render_manim(
         }
     source: str = file_entry["content"]
 
+    if _SCENE_CLASS_RE.fullmatch(scene_class) is None:
+        return {
+            "ok": False,
+            "kind": "logic",
+            "message": (
+                "Invalid scene_class. Expected a valid Python identifier matching "
+                "^[A-Za-z_][A-Za-z0-9_]*$."
+            ),
+        }
+
     # 2. Resolve thread_id for output namespacing.
     configurable = (config or {}).get("configurable") or {}
-    thread_id: str = configurable.get("thread_id") or "default"
+    raw_thread_id: str = configurable.get("thread_id") or "default"
+    # Sanitize: collapse to basename, strip disallowed chars, cap length.
+    thread_id = (
+        re.sub(r"[^A-Za-z0-9_.-]", "_", Path(raw_thread_id).name).lstrip(".")[:128] or "default"
+    )
 
     # 3. Compute attempt number from prior tool messages and enforce the cap.
     attempt: int = _count_prior_render_calls(state) + 1
@@ -225,13 +242,21 @@ def _run_render_blocking(
         # Hydrate (or create) the named app on Modal's side before spawning
         # the sandbox. Done lazily here so importing this module never
         # requires Modal credentials.
-        hydrated_app = modal.App.lookup("conceptflow", create_if_missing=True)
+        settings = get_settings()
+        hydrated_app = modal.App.lookup(settings.modal_app_name, create_if_missing=True)
+
+        sandbox_timeout = settings.modal_sandbox_timeout
+        if sandbox_timeout is None:
+            sandbox_timeout = _SANDBOX_TIMEOUT_SECONDS
+        else:
+            sandbox_timeout = int(sandbox_timeout)
+
         modal_sb = modal.Sandbox.create(
             "sleep",
             "infinity",
             app=hydrated_app,
             image=MANIM_IMAGE,
-            timeout=_SANDBOX_TIMEOUT_SECONDS,
+            timeout=sandbox_timeout,
             workdir="/work",
         )
     except modal.exception.Error as exc:

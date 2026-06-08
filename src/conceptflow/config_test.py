@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from langchain_core.language_models import BaseChatModel
+from pydantic import ValidationError
 
 from conceptflow.config import Settings, get_model, get_model_small, load_environment
 
@@ -38,6 +39,30 @@ def test_max_render_attempts_overridable_via_env(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("MAX_RENDER_ATTEMPTS", "5")
     s = Settings(_env_file=None)  # type: ignore
     assert s.max_render_attempts == 5
+
+
+def test_max_render_attempts_invalid_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify 0 is rejected for Settings.max_render_attempts.
+
+    Like test_default_max_render_attempts and
+    test_max_render_attempts_overridable_via_env, this tests validation constraints
+    on Settings.max_render_attempts.
+    """
+    monkeypatch.setenv("MAX_RENDER_ATTEMPTS", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore
+
+
+def test_max_render_attempts_invalid_negative(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify a negative value is rejected for Settings.max_render_attempts.
+
+    Like test_default_max_render_attempts and
+    test_max_render_attempts_overridable_via_env, this tests validation constraints
+    on Settings.max_render_attempts.
+    """
+    monkeypatch.setenv("MAX_RENDER_ATTEMPTS", "-1")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore
 
 
 def test_default_model_settings(monkeypatch: pytest.MonkeyPatch) -> None:

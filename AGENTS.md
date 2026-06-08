@@ -5,11 +5,6 @@ system. A user provides a topic or question in plain language; the system
 orchestrates specialized agents to produce a short animated explanatory video
 in the style of 3Blue1Brown.
 
-The current implementation is a proof-of-concept LangGraph/Deep Agents app:
-the root agent delegates to a script-writing subagent and a Manim-coding
-subagent. The Manim subagent renders generated scenes in a Modal sandbox and
-writes the final MP4 under `./outputs/<thread_id>/video.mp4`.
-
 ---
 
 ## Tech Stack

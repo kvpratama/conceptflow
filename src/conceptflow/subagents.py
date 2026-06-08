@@ -9,6 +9,7 @@ from __future__ import annotations
 from deepagents import SubAgent
 
 from conceptflow import prompts
+from conceptflow.config import get_settings
 from conceptflow.render import render_manim
 
 
@@ -22,6 +23,7 @@ def build_subagents() -> list[SubAgent]:
           (`write_file`, `read_file`, etc.).
         * ``"manim-coder"`` — built-ins plus the custom `render_manim` tool.
     """
+    max_render_attempts = get_settings().max_render_attempts
     return [
         SubAgent(
             name="script-writer",
@@ -37,7 +39,7 @@ def build_subagents() -> list[SubAgent]:
             description=(
                 "Read /script.md, write /scene.py as a Manim CE module, and "
                 "render it via the render_manim tool. Self-corrects up to "
-                "3 times on render errors."
+                f"{max_render_attempts} render attempts on render errors."
             ),
             system_prompt=prompts.MANIM_CODER_PROMPT,
             tools=[render_manim],
