@@ -1,4 +1,4 @@
-"""Shared configuration for the agentic data analytics example.
+"""Shared configuration for ConceptFlow.
 
 Loads settings from a local ``.env`` file so you can swap models or providers
 without editing any source file.

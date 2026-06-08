@@ -90,8 +90,7 @@ async def render_manim(
 
         * Render failure (Manim subprocess exited non-zero)::
 
-              {"ok": False, "kind": "render",
-               "stderr": "...", "stdout": "...", "attempt": n}
+              {"ok": False, "kind": "render", "stderr": "...", "attempt": n}
 
         * Infrastructure failure (Modal API / sandbox spawn error)::
 
@@ -245,7 +244,6 @@ def _run_render_blocking(
                 "ok": False,
                 "kind": "render",
                 "stderr": exec_result.output,
-                "stdout": exec_result.output,
                 "attempt": attempt,
             }
 
@@ -261,7 +259,6 @@ def _run_render_blocking(
                 "ok": False,
                 "kind": "render",
                 "stderr": "Manim exited 0 but no final .mp4 file was produced.",
-                "stdout": exec_result.output,
                 "attempt": attempt,
             }
 
