@@ -38,14 +38,6 @@ from conceptflow.config import get_settings
 # later call inside Modal never touches `os.getcwd()` again.
 tempfile.gettempdir()
 
-# Modal app namespacing all conceptflow sandboxes.
-#
-# We construct a local App at import time (no network, no auth required) so
-# the module can be imported in hermetic test environments. The actual
-# hydrated App used by `Sandbox.create` is fetched lazily inside
-# `_run_render` via `modal.App.lookup(..., create_if_missing=True)`.
-APP: modal.App = modal.App(get_settings().modal_app_name)
-
 # Manim CE image. System packages are required for cairo/pango/ffmpeg;
 # texlive-latex-extra is included so `MathTex` works when needed.
 MANIM_IMAGE: modal.Image = (
@@ -58,15 +50,11 @@ MANIM_IMAGE: modal.Image = (
         "texlive-fonts-recommended",
         "texlive-latex-extra",
     )
-    .uv_pip_install("manim")
+    .uv_pip_install("manim==0.20.1")
 )
 
 # Hard wall-clock cap on a single render invocation.
 _RENDER_TIMEOUT_SECONDS: int = 60 * 5
-
-# Sandbox lifetime cap. Generous because the first invocation pays the
-# image build cost.
-_SANDBOX_TIMEOUT_SECONDS: int = 60 * 15
 
 # Where rendered MP4s are written on the local machine.
 _OUTPUTS_ROOT: Path = Path("./outputs")
@@ -245,18 +233,12 @@ def _run_render_blocking(
         settings = get_settings()
         hydrated_app = modal.App.lookup(settings.modal_app_name, create_if_missing=True)
 
-        sandbox_timeout = settings.modal_sandbox_timeout
-        if sandbox_timeout is None:
-            sandbox_timeout = _SANDBOX_TIMEOUT_SECONDS
-        else:
-            sandbox_timeout = int(sandbox_timeout)
-
         modal_sb = modal.Sandbox.create(
             "sleep",
             "infinity",
             app=hydrated_app,
             image=MANIM_IMAGE,
-            timeout=sandbox_timeout,
+            timeout=settings.modal_sandbox_timeout,
             workdir="/work",
         )
     except modal.exception.Error as exc:

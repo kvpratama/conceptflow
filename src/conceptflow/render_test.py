@@ -29,15 +29,6 @@ def test_module_exposes_modal_image_with_manim_deps():
     assert isinstance(render.MANIM_IMAGE, modal.Image)
 
 
-def test_module_exposes_modal_app():
-    import modal
-
-    from conceptflow import render
-
-    assert isinstance(render.APP, modal.App)
-    assert render.APP.name == render.get_settings().modal_app_name
-
-
 async def test_render_returns_logic_error_when_scene_py_missing():
     from conceptflow.render import render_manim
 
@@ -353,27 +344,3 @@ async def test_render_uses_custom_settings(tmp_path, monkeypatch):
 
     mock_lookup.assert_called_once_with("custom-app-name", create_if_missing=True)
     assert mock_create.call_args.kwargs["timeout"] == 123
-
-
-async def test_render_uses_default_sandbox_timeout_fallback(tmp_path, monkeypatch):
-    from conceptflow import render
-
-    # Set timeout to None in monkeypatched Settings
-    original_settings = render.get_settings()
-    monkeypatch.setattr(original_settings, "modal_sandbox_timeout", None)
-
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
-    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
-    mock_create = MagicMock(return_value=MagicMock())
-    monkeypatch.setattr(render.modal.Sandbox, "create", mock_create)
-    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=_make_fake_sandbox()))
-
-    state = {
-        "files": {"/scene.py": {"content": "x", "encoding": "utf-8"}},
-        "messages": [],
-    }
-    config: RunnableConfig = {"configurable": {"thread_id": "t"}}
-    await render.render_manim.ainvoke({"scene_class": "Foo", "state": state}, config=config)
-
-    # Should fall back to _SANDBOX_TIMEOUT_SECONDS
-    assert mock_create.call_args.kwargs["timeout"] == render._SANDBOX_TIMEOUT_SECONDS
