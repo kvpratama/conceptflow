@@ -219,3 +219,6 @@ __marimo__/
 
 # LangGraph Studio
 .langgraph_api/
+
+# Local MP4 outputs from render_manim
+outputs/

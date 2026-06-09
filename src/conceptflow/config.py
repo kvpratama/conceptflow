@@ -1,4 +1,4 @@
-"""Shared configuration for the agentic data analytics example.
+"""Shared configuration for ConceptFlow.
 
 Loads settings from a local ``.env`` file so you can swap models or providers
 without editing any source file.
@@ -23,7 +23,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # NOTE: env loading is deliberately NOT performed at import time. Callers
@@ -52,6 +52,7 @@ def load_environment() -> None:
     user_config = Path.home() / ".config" / "conceptflow" / "config.env"
     if user_config.exists():
         load_dotenv(user_config, override=False)
+    get_settings.cache_clear()
 
 
 class Settings(BaseSettings):
@@ -70,6 +71,9 @@ class Settings(BaseSettings):
             project. Created on first use if missing.
         modal_sandbox_timeout: Hard wall-clock cap (seconds) on a single
             sandbox's lifetime. Defaults to 30 minutes.
+        max_render_attempts: Maximum number of ``render_manim`` attempts
+            allowed per run. Enforced in code by the render tool, not merely
+            advised in the manim-coder prompt.
         retry_max_retries: Maximum number of retries for ModelRetryMiddleware.
         retry_backoff_factor: Exponential backoff factor for ModelRetryMiddleware.
         retry_initial_delay: Initial delay (seconds) for ModelRetryMiddleware.
@@ -90,6 +94,7 @@ class Settings(BaseSettings):
     temperature: float = 0.0
     modal_app_name: str = "conceptflow"
     modal_sandbox_timeout: int = 60 * 30
+    max_render_attempts: int = Field(default=3, gt=0)
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0
