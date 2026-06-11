@@ -7,7 +7,10 @@ time so Studio can introspect it without invoking the model.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from deepagents import create_deep_agent
+from deepagents.backends import FilesystemBackend
 from langchain.agents.middleware import (
     AgentMiddleware,
     ModelFallbackMiddleware,
@@ -16,13 +19,41 @@ from langchain.agents.middleware import (
 
 from conceptflow.config import get_model, get_model_small, get_settings, load_environment
 from conceptflow.prompts import ORCHESTRATOR_PROMPT
+from conceptflow.render import output_dir
 from conceptflow.subagents import build_subagents
+
+if TYPE_CHECKING:
+    from langgraph.prebuilt.tool_node import ToolRuntime
 
 # Populate os.environ before init_chat_model reads provider keys.
 load_environment()
 
 _settings = get_settings()
 _model = get_model(_settings)
+
+
+def _make_backend(runtime: ToolRuntime) -> FilesystemBackend:
+    """Build a per-thread FilesystemBackend rooted at the run's output dir.
+
+    The per-run directory depends on ``thread_id`` (known only at runtime), so
+    the backend is created lazily per invocation. Every artifact a run
+    produces — ``script.md`` (script-writer), ``scene.py`` (manim-coder), and
+    ``video.mp4`` (render_manim) — lands together in ``./outputs/<thread_id>/``
+    on disk so a human can review the full output of a run.
+
+    Args:
+        runtime: The tool runtime, whose ``config`` carries the run's
+            ``thread_id`` under ``configurable``.
+
+    Returns:
+        A ``FilesystemBackend`` with ``virtual_mode=True`` rooted at the
+        per-thread output directory.
+    """
+    configurable = (runtime.config or {}).get("configurable") or {}
+    out_dir = output_dir(configurable.get("thread_id"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return FilesystemBackend(root_dir=str(out_dir), virtual_mode=True)
+
 
 base_middleware: list[AgentMiddleware] = [
     ModelRetryMiddleware(
@@ -39,6 +70,7 @@ graph = create_deep_agent(
     system_prompt=ORCHESTRATOR_PROMPT,
     middleware=base_middleware,
     subagents=build_subagents(),
+    backend=_make_backend,
     name="conceptflow",
 )
 """Compiled LangGraph for the ConceptFlow root deep agent."""

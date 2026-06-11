@@ -62,6 +62,37 @@ _OUTPUTS_ROOT: Path = Path("./outputs")
 _SCENE_CLASS_RE: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+def sanitize_thread_id(thread_id: str | None) -> str:
+    """Return a filesystem-safe directory name derived from a thread id.
+
+    Collapses the value to its basename (blocking ``../`` escapes), replaces
+    any character outside ``[A-Za-z0-9_.-]`` with ``_``, strips leading dots,
+    caps the result at 128 characters, and falls back to ``"default"`` when the
+    input is empty or sanitizes away to nothing.
+
+    Args:
+        thread_id: Raw thread id from the run config, or ``None``.
+
+    Returns:
+        A safe directory-name string.
+    """
+    raw = thread_id or "default"
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(raw).name).lstrip(".")[:128]
+    return cleaned or "default"
+
+
+def output_dir(thread_id: str | None) -> Path:
+    """Return the per-thread output directory under the outputs root.
+
+    Args:
+        thread_id: Raw thread id from the run config, or ``None``.
+
+    Returns:
+        ``<_OUTPUTS_ROOT>/<sanitized thread id>`` as a ``Path``.
+    """
+    return _OUTPUTS_ROOT / sanitize_thread_id(thread_id)
+
+
 @tool
 async def render_manim(
     scene_class: str,
@@ -97,20 +128,7 @@ async def render_manim(
 
               {"ok": False, "kind": "exhausted", "message": "...", "attempt": n}
     """
-    # 1. Pull /scene.py out of agent state.
-    files = state.get("files") or {}
-    file_entry = files.get("/scene.py")
-    if file_entry is None:
-        return {
-            "ok": False,
-            "kind": "logic",
-            "message": (
-                "/scene.py not found in the agent's virtual filesystem. "
-                "Write it with write_file before calling render_manim."
-            ),
-        }
-    source: str = file_entry["content"]
-
+    # 1. Validate scene_class first (cheap, no I/O).
     if _SCENE_CLASS_RE.fullmatch(scene_class) is None:
         return {
             "ok": False,
@@ -121,15 +139,25 @@ async def render_manim(
             ),
         }
 
-    # 2. Resolve thread_id for output namespacing.
+    # 2. Resolve the per-thread output directory (shared with the backend).
     configurable = (config or {}).get("configurable") or {}
-    raw_thread_id: str = configurable.get("thread_id") or "default"
-    # Sanitize: collapse to basename, strip disallowed chars, cap length.
-    thread_id = (
-        re.sub(r"[^A-Za-z0-9_.-]", "_", Path(raw_thread_id).name).lstrip(".")[:128] or "default"
-    )
+    out_dir = output_dir(configurable.get("thread_id"))
 
-    # 3. Compute attempt number from prior tool messages and enforce the cap.
+    # 3. Read scene.py from disk. The manim-coder writes it there via the
+    #    FilesystemBackend; it is no longer present in agent state.
+    scene_path = out_dir / "scene.py"
+    if not scene_path.exists():
+        return {
+            "ok": False,
+            "kind": "logic",
+            "message": (
+                f"scene.py not found at {scene_path}. Write it with write_file "
+                "before calling render_manim."
+            ),
+        }
+    source: str = scene_path.read_text(encoding="utf-8")
+
+    # 4. Compute attempt number from prior tool messages and enforce the cap.
     attempt: int = _count_prior_render_calls(state) + 1
     max_attempts: int = get_settings().max_render_attempts
     if attempt > max_attempts:
@@ -143,11 +171,11 @@ async def render_manim(
             ),
         }
 
-    # 4. Run the render.
+    # 5. Run the render.
     return await _run_render(
         source=source,
         scene_class=scene_class,
-        thread_id=thread_id,
+        out_dir=out_dir,
         attempt=attempt,
     )
 
@@ -192,7 +220,7 @@ async def _run_render(
     *,
     source: str,
     scene_class: str,
-    thread_id: str,
+    out_dir: Path,
     attempt: int,
 ) -> dict[str, Any]:
     """Run the blocking Modal render in a worker thread.
@@ -206,7 +234,7 @@ async def _run_render(
         _run_render_blocking,
         source=source,
         scene_class=scene_class,
-        thread_id=thread_id,
+        out_dir=out_dir,
         attempt=attempt,
     )
 
@@ -215,7 +243,7 @@ def _run_render_blocking(
     *,
     source: str,
     scene_class: str,
-    thread_id: str,
+    out_dir: Path,
     attempt: int,
 ) -> dict[str, Any]:
     """Spin up a sandbox, run manim, download the MP4, tear the sandbox down.
@@ -298,8 +326,7 @@ def _run_render_blocking(
                 ),
             }
 
-        # Persist locally.
-        out_dir = _OUTPUTS_ROOT / thread_id
+        # Persist locally alongside script.md and scene.py.
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "video.mp4"
         out_path.write_bytes(content)
