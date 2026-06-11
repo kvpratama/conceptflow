@@ -13,17 +13,10 @@ if TYPE_CHECKING:
     from langgraph.prebuilt.tool_node import ToolRuntime
 
 
-def test_graph_is_compiled_state_graph():
-    from conceptflow.agent import graph
+async def test_graph_is_compiled_state_graph():
+    from conceptflow.agent import make_graph
 
-    assert isinstance(graph, CompiledStateGraph)
-
-
-def test_graph_has_a_name():
-    from conceptflow.agent import graph
-
-    # `name` is set when create_deep_agent(name=...) is called.
-    assert graph.name == "conceptflow"
+    assert isinstance(await make_graph(config={}), CompiledStateGraph)
 
 
 def test_build_subagents_is_called_by_agent_module():

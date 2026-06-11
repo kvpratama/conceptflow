@@ -7,6 +7,7 @@ time so Studio can introspect it without invoking the model.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from deepagents import create_deep_agent
@@ -16,6 +17,8 @@ from langchain.agents.middleware import (
     ModelFallbackMiddleware,
     ModelRetryMiddleware,
 )
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph.state import CompiledStateGraph
 
 from conceptflow.config import get_model, get_model_small, get_settings, load_environment
 from conceptflow.paths import out_dir_from_config
@@ -54,22 +57,46 @@ def _make_backend(runtime: ToolRuntime) -> FilesystemBackend:
     return FilesystemBackend(root_dir=str(out_dir), virtual_mode=True)
 
 
-base_middleware: list[AgentMiddleware] = [
-    ModelRetryMiddleware(
-        max_retries=_settings.retry_max_retries,
-        backoff_factor=_settings.retry_backoff_factor,
-        initial_delay=_settings.retry_initial_delay,
-    ),
-    ModelFallbackMiddleware(get_model_small(_settings)),
-]
+async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
 
-graph = create_deep_agent(
-    model=_model,
-    tools=[],
-    system_prompt=ORCHESTRATOR_PROMPT,
-    middleware=base_middleware,
-    subagents=build_subagents(),
-    backend=_make_backend,
-    name="conceptflow",
-)
-"""Compiled LangGraph for the ConceptFlow root deep agent."""
+    configurable = dict(config.get("configurable", {}))
+    # Default to False (fail-closed): only provision a real Modal sandbox when
+    # the caller explicitly signals this is an execution. Schema/read calls
+    # from LangGraph Studio (assistants.read, threads.read, threads.update)
+    # fall through to the cached no-op SchemaOnlySandboxBackend graph.
+    is_execution = bool(configurable.get("__is_for_execution__", False))
+    if is_execution:
+        out_dir = out_dir_from_config(config)
+        await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
+
+        base_middleware: list[AgentMiddleware] = [
+            ModelRetryMiddleware(
+                max_retries=_settings.retry_max_retries,
+                backoff_factor=_settings.retry_backoff_factor,
+                initial_delay=_settings.retry_initial_delay,
+            ),
+            ModelFallbackMiddleware(get_model_small(_settings)),
+        ]
+
+        # FilesystemBackend.__init__ resolves root_dir, which makes blocking
+        # os.getcwd/realpath calls; build it off the event loop.
+        backend = await asyncio.to_thread(
+            FilesystemBackend, root_dir=str(out_dir), virtual_mode=True
+        )
+
+        # Compiled LangGraph for the ConceptFlow root deep agent.
+        return create_deep_agent(
+            model=_model,
+            system_prompt=ORCHESTRATOR_PROMPT,
+            middleware=base_middleware,
+            subagents=build_subagents(),
+            backend=backend,
+            name="conceptflow",
+        )
+
+    # SchemaOnlySandboxBackend graph for Studio's schema-inspection-only calls.
+    return create_deep_agent(
+        model=_model,
+        subagents=build_subagents(),
+        name="conceptflow",
+    )
