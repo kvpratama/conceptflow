@@ -31,10 +31,10 @@ def test_module_exposes_modal_image_with_manim_deps():
 
 
 async def test_render_returns_logic_error_when_scene_py_missing(tmp_path, monkeypatch):
-    from conceptflow import render
+    from conceptflow import paths, render
 
     # Point outputs at an empty temp dir so scene.py is genuinely absent.
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
 
     state = {"files": {}, "messages": []}
     config: RunnableConfig = {"configurable": {"thread_id": "t1"}}
@@ -128,10 +128,10 @@ def _make_fake_sandbox(
 
 
 async def test_render_success_writes_mp4_and_returns_path(tmp_path, monkeypatch):
-    from conceptflow import render
+    from conceptflow import paths, render
 
     # Redirect outputs to a tmp dir.
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     _write_scene(tmp_path / "outputs", "thread-xyz")
 
     # Mock modal.Sandbox.create and ModalSandbox.
@@ -169,9 +169,9 @@ async def test_render_success_writes_mp4_and_returns_path(tmp_path, monkeypatch)
 async def test_render_selects_final_mp4_not_partial_movie_file(tmp_path, monkeypatch):
     """When `find` returns partial movie files alongside the final render,
     the final `<SceneClass>.mp4` (outside partial_movie_files) is chosen."""
-    from conceptflow import render
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     _write_scene(tmp_path / "outputs", "t-partial")
     fake_modal_sb = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
@@ -205,9 +205,9 @@ async def test_render_selects_final_mp4_not_partial_movie_file(tmp_path, monkeyp
 
 
 async def test_render_returns_render_error_on_nonzero_exit(tmp_path, monkeypatch):
-    from conceptflow import render
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     _write_scene(tmp_path / "outputs", "t-err")
     fake_modal_sb = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
@@ -237,9 +237,9 @@ async def test_render_returns_render_error_on_nonzero_exit(tmp_path, monkeypatch
 
 
 async def test_attempt_counter_reflects_prior_tool_calls(tmp_path, monkeypatch):
-    from conceptflow import render
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     _write_scene(tmp_path / "outputs", "t")
     fake_modal_sb = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
@@ -269,9 +269,9 @@ async def test_render_refuses_once_attempt_cap_exceeded(tmp_path, monkeypatch):
     No sandbox is created and an 'exhausted' stop envelope is returned so
     the cap is enforced in code, not merely advised in the prompt.
     """
-    from conceptflow import render
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     _write_scene(tmp_path / "outputs", "t")
     sandbox_create = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", sandbox_create)
@@ -296,9 +296,9 @@ async def test_render_refuses_once_attempt_cap_exceeded(tmp_path, monkeypatch):
 
 
 async def test_render_returns_infra_error_when_sandbox_fails_to_start(tmp_path, monkeypatch):
-    from conceptflow import render
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     _write_scene(tmp_path / "outputs", "t")
 
     def _explode(*_args, **_kwargs):
@@ -319,9 +319,9 @@ async def test_render_returns_infra_error_when_sandbox_fails_to_start(tmp_path, 
 
 
 async def test_thread_id_defaults_when_absent(tmp_path, monkeypatch):
-    from conceptflow import render
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     _write_scene(tmp_path / "outputs", "default")
     fake_modal_sb = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
@@ -343,13 +343,13 @@ async def test_thread_id_defaults_when_absent(tmp_path, monkeypatch):
 
 
 async def test_render_uses_custom_settings(tmp_path, monkeypatch):
-    from conceptflow import render
+    from conceptflow import paths, render
 
     monkeypatch.setenv("MODAL_APP_NAME", "custom-app-name")
     monkeypatch.setenv("MODAL_SANDBOX_TIMEOUT", "123")
     render.get_settings.cache_clear()
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     _write_scene(tmp_path / "outputs", "t")
     mock_lookup = MagicMock(return_value=MagicMock())
     monkeypatch.setattr(render.modal.App, "lookup", mock_lookup)
@@ -366,34 +366,3 @@ async def test_render_uses_custom_settings(tmp_path, monkeypatch):
 
     mock_lookup.assert_called_once_with("custom-app-name", create_if_missing=True)
     assert mock_create.call_args.kwargs["timeout"] == 123
-
-
-def test_sanitize_thread_id_defaults_when_empty():
-    from conceptflow.render import sanitize_thread_id
-
-    assert sanitize_thread_id(None) == "default"
-    assert sanitize_thread_id("") == "default"
-
-
-def test_sanitize_thread_id_strips_path_traversal():
-    from conceptflow.render import sanitize_thread_id
-
-    # Path(...).name collapses to the basename, blocking ../ escapes.
-    assert sanitize_thread_id("../../etc/passwd") == "passwd"
-    # A pure traversal has an empty basename -> falls back to "default".
-    assert sanitize_thread_id("../../") == "default"
-
-
-def test_sanitize_thread_id_replaces_disallowed_chars_and_caps_length():
-    from conceptflow.render import sanitize_thread_id
-
-    assert sanitize_thread_id("a b/c!d") == "c_d"
-    assert len(sanitize_thread_id("x" * 500)) == 128
-
-
-def test_output_dir_joins_outputs_root_and_sanitizes(tmp_path, monkeypatch):
-    from conceptflow import render
-
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
-    assert render.output_dir("../evil") == tmp_path / "outputs" / "evil"
-    assert render.output_dir(None) == tmp_path / "outputs" / "default"

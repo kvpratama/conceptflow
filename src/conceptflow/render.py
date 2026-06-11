@@ -1,8 +1,8 @@
 """Custom `render_manim` tool for ConceptFlow.
 
-Renders a Manim CE scene defined in the agent's virtual filesystem
-(`/scene.py`) inside a Modal sandbox, then downloads the resulting MP4
-to `./outputs/<thread_id>/video.mp4` on the local machine.
+Renders a Manim CE scene from `./outputs/<thread_id>/scene.py` on disk
+inside a Modal sandbox, then downloads the resulting MP4 to
+`./outputs/<thread_id>/video.mp4` on the local machine.
 
 All Modal interaction is contained in this module so the rest of the
 codebase can be tested without touching the network.
@@ -25,6 +25,7 @@ from langchain_modal import ModalSandbox
 from langgraph.prebuilt import InjectedState
 
 from conceptflow.config import get_settings
+from conceptflow.paths import out_dir_from_config
 
 # Pre-resolve and cache the system temp directory at import time, while no
 # asyncio event loop is running.
@@ -56,41 +57,10 @@ MANIM_IMAGE: modal.Image = (
 # Hard wall-clock cap on a single render invocation.
 _RENDER_TIMEOUT_SECONDS: int = 60 * 5
 
-# Where rendered MP4s are written on the local machine.
-_OUTPUTS_ROOT: Path = Path("./outputs")
+# Per-thread output directory layout lives in `conceptflow.paths` so the
+# orchestrator and the render tool share a single helper.
 
 _SCENE_CLASS_RE: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def sanitize_thread_id(thread_id: str | None) -> str:
-    """Return a filesystem-safe directory name derived from a thread id.
-
-    Collapses the value to its basename (blocking ``../`` escapes), replaces
-    any character outside ``[A-Za-z0-9_.-]`` with ``_``, strips leading dots,
-    caps the result at 128 characters, and falls back to ``"default"`` when the
-    input is empty or sanitizes away to nothing.
-
-    Args:
-        thread_id: Raw thread id from the run config, or ``None``.
-
-    Returns:
-        A safe directory-name string.
-    """
-    raw = thread_id or "default"
-    cleaned = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(raw).name).lstrip(".")[:128]
-    return cleaned or "default"
-
-
-def output_dir(thread_id: str | None) -> Path:
-    """Return the per-thread output directory under the outputs root.
-
-    Args:
-        thread_id: Raw thread id from the run config, or ``None``.
-
-    Returns:
-        ``<_OUTPUTS_ROOT>/<sanitized thread id>`` as a ``Path``.
-    """
-    return _OUTPUTS_ROOT / sanitize_thread_id(thread_id)
 
 
 @tool
@@ -99,11 +69,12 @@ async def render_manim(
     state: Annotated[dict[str, Any], InjectedState],
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    """Render the Manim scene defined in `/scene.py` to an MP4.
+    """Render the Manim scene defined at `./outputs/<thread_id>/scene.py`
+    to an MP4.
 
     Args:
-        scene_class: Name of the `Scene` subclass inside `/scene.py` to render
-            (e.g. ``"PythagoreanIntro"``).
+        scene_class: Name of the `Scene` subclass inside the on-disk `scene.py`
+            module to render (e.g. ``"PythagoreanIntro"``).
 
     Returns:
         A dict in one of three shapes:
@@ -120,7 +91,7 @@ async def render_manim(
 
               {"ok": False, "kind": "infra", "message": "..."}
 
-        * Logic failure (missing `/scene.py` in agent state)::
+        * Logic failure (missing `./outputs/<thread_id>/scene.py` on disk)::
 
               {"ok": False, "kind": "logic", "message": "..."}
 
@@ -140,8 +111,7 @@ async def render_manim(
         }
 
     # 2. Resolve the per-thread output directory (shared with the backend).
-    configurable = (config or {}).get("configurable") or {}
-    out_dir = output_dir(configurable.get("thread_id"))
+    out_dir = out_dir_from_config(config)
 
     # 3. Read scene.py from disk. The manim-coder writes it there via the
     #    FilesystemBackend; it is no longer present in agent state.

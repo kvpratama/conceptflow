@@ -44,9 +44,9 @@ def test_make_backend_builds_per_thread_filesystem_backend(tmp_path, monkeypatch
 
     from deepagents.backends import FilesystemBackend
 
-    from conceptflow import agent, render
+    from conceptflow import agent, paths
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
 
     runtime = SimpleNamespace(config={"configurable": {"thread_id": "abc"}})
     backend = agent._make_backend(cast("ToolRuntime", runtime))
@@ -61,9 +61,9 @@ def test_make_backend_builds_per_thread_filesystem_backend(tmp_path, monkeypatch
 def test_make_backend_defaults_thread_id_when_absent(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from conceptflow import agent, render
+    from conceptflow import agent, paths
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
 
     runtime = SimpleNamespace(config={})
     backend = agent._make_backend(cast("ToolRuntime", runtime))

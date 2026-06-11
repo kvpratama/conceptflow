@@ -18,8 +18,8 @@ from langchain.agents.middleware import (
 )
 
 from conceptflow.config import get_model, get_model_small, get_settings, load_environment
+from conceptflow.paths import out_dir_from_config
 from conceptflow.prompts import ORCHESTRATOR_PROMPT
-from conceptflow.render import output_dir
 from conceptflow.subagents import build_subagents
 
 if TYPE_CHECKING:
@@ -49,8 +49,7 @@ def _make_backend(runtime: ToolRuntime) -> FilesystemBackend:
         A ``FilesystemBackend`` with ``virtual_mode=True`` rooted at the
         per-thread output directory.
     """
-    configurable = (runtime.config or {}).get("configurable") or {}
-    out_dir = output_dir(configurable.get("thread_id"))
+    out_dir = out_dir_from_config(runtime.config)
     out_dir.mkdir(parents=True, exist_ok=True)
     return FilesystemBackend(root_dir=str(out_dir), virtual_mode=True)
 
