@@ -1,8 +1,9 @@
-"""Root ConceptFlow deep agent, exported as `graph` for LangGraph Studio.
+"""Root ConceptFlow deep agent, exported as `make_graph` for LangGraph Studio.
 
-`langgraph dev` loads this module via `langgraph.json` and discovers the
-module-level `graph` attribute below. The graph is compiled at import
-time so Studio can introspect it without invoking the model.
+`langgraph dev` loads this module via `langgraph.json` and calls the
+`make_graph` function to build the graph on-demand. The function inspects
+the runnable config to decide whether to return a full execution graph or a
+lightweight schema-only graph for Studio introspection.
 """
 
 from __future__ import annotations
