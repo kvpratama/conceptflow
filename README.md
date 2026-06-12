@@ -51,7 +51,7 @@ Start the LangGraph development server:
 uv run langgraph dev
 ```
 
-The graph is exposed as `conceptflow` from `./src/conceptflow/agent.py:graph`
+The graph is exposed as `conceptflow` from `./src/conceptflow/agent.py:make_graph`
 via `langgraph.json`.
 
 ## Development

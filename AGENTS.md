@@ -42,7 +42,7 @@ in the style of 3Blue1Brown.
 ```
 
 `langgraph.json` exposes the graph named `conceptflow` from
-`./src/conceptflow/agent.py:graph`.
+`./src/conceptflow/agent.py:make_graph`.
 
 Runtime/generated directories such as `outputs/`, `.langgraph_api/`,
 `.ruff_cache/`, `.pytest_cache/`, and `__pycache__/` are not source. Do not

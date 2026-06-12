@@ -1,8 +1,8 @@
 """Custom `render_manim` tool for ConceptFlow.
 
-Renders a Manim CE scene defined in the agent's virtual filesystem
-(`/scene.py`) inside a Modal sandbox, then downloads the resulting MP4
-to `./outputs/<thread_id>/video.mp4` on the local machine.
+Renders a Manim CE scene from `./outputs/<thread_id>/scene.py` on disk
+inside a Modal sandbox, then downloads the resulting MP4 to
+`./outputs/<thread_id>/video.mp4` on the local machine.
 
 All Modal interaction is contained in this module so the rest of the
 codebase can be tested without touching the network.
@@ -25,6 +25,7 @@ from langchain_modal import ModalSandbox
 from langgraph.prebuilt import InjectedState
 
 from conceptflow.config import get_settings
+from conceptflow.paths import out_dir_from_config
 
 # Pre-resolve and cache the system temp directory at import time, while no
 # asyncio event loop is running.
@@ -56,8 +57,8 @@ MANIM_IMAGE: modal.Image = (
 # Hard wall-clock cap on a single render invocation.
 _RENDER_TIMEOUT_SECONDS: int = 60 * 5
 
-# Where rendered MP4s are written on the local machine.
-_OUTPUTS_ROOT: Path = Path("./outputs")
+# Per-thread output directory layout lives in `conceptflow.paths` so the
+# orchestrator and the render tool share a single helper.
 
 _SCENE_CLASS_RE: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -68,11 +69,12 @@ async def render_manim(
     state: Annotated[dict[str, Any], InjectedState],
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    """Render the Manim scene defined in `/scene.py` to an MP4.
+    """Render the Manim scene defined at `./outputs/<thread_id>/scene.py`
+    to an MP4.
 
     Args:
-        scene_class: Name of the `Scene` subclass inside `/scene.py` to render
-            (e.g. ``"PythagoreanIntro"``).
+        scene_class: Name of the `Scene` subclass inside the on-disk `scene.py`
+            module to render (e.g. ``"PythagoreanIntro"``).
 
     Returns:
         A dict in one of three shapes:
@@ -89,7 +91,7 @@ async def render_manim(
 
               {"ok": False, "kind": "infra", "message": "..."}
 
-        * Logic failure (missing `/scene.py` in agent state)::
+        * Logic failure (missing `./outputs/<thread_id>/scene.py` on disk)::
 
               {"ok": False, "kind": "logic", "message": "..."}
 
@@ -97,20 +99,7 @@ async def render_manim(
 
               {"ok": False, "kind": "exhausted", "message": "...", "attempt": n}
     """
-    # 1. Pull /scene.py out of agent state.
-    files = state.get("files") or {}
-    file_entry = files.get("/scene.py")
-    if file_entry is None:
-        return {
-            "ok": False,
-            "kind": "logic",
-            "message": (
-                "/scene.py not found in the agent's virtual filesystem. "
-                "Write it with write_file before calling render_manim."
-            ),
-        }
-    source: str = file_entry["content"]
-
+    # 1. Validate scene_class first (cheap, no I/O).
     if _SCENE_CLASS_RE.fullmatch(scene_class) is None:
         return {
             "ok": False,
@@ -121,15 +110,24 @@ async def render_manim(
             ),
         }
 
-    # 2. Resolve thread_id for output namespacing.
-    configurable = (config or {}).get("configurable") or {}
-    raw_thread_id: str = configurable.get("thread_id") or "default"
-    # Sanitize: collapse to basename, strip disallowed chars, cap length.
-    thread_id = (
-        re.sub(r"[^A-Za-z0-9_.-]", "_", Path(raw_thread_id).name).lstrip(".")[:128] or "default"
-    )
+    # 2. Resolve the per-thread output directory (shared with the backend).
+    out_dir = out_dir_from_config(config)
 
-    # 3. Compute attempt number from prior tool messages and enforce the cap.
+    # 3. Read scene.py from disk. The manim-coder writes it there via the
+    #    FilesystemBackend; it is no longer present in agent state.
+    scene_path = out_dir / "scene.py"
+    if not scene_path.is_file():
+        return {
+            "ok": False,
+            "kind": "logic",
+            "message": (
+                f"scene.py not found at {scene_path}. Write it with write_file "
+                "before calling render_manim."
+            ),
+        }
+    source: str = await asyncio.to_thread(scene_path.read_text, encoding="utf-8")
+
+    # 4. Compute attempt number from prior tool messages and enforce the cap.
     attempt: int = _count_prior_render_calls(state) + 1
     max_attempts: int = get_settings().max_render_attempts
     if attempt > max_attempts:
@@ -143,11 +141,11 @@ async def render_manim(
             ),
         }
 
-    # 4. Run the render.
+    # 5. Run the render.
     return await _run_render(
         source=source,
         scene_class=scene_class,
-        thread_id=thread_id,
+        out_dir=out_dir,
         attempt=attempt,
     )
 
@@ -192,7 +190,7 @@ async def _run_render(
     *,
     source: str,
     scene_class: str,
-    thread_id: str,
+    out_dir: Path,
     attempt: int,
 ) -> dict[str, Any]:
     """Run the blocking Modal render in a worker thread.
@@ -206,7 +204,7 @@ async def _run_render(
         _run_render_blocking,
         source=source,
         scene_class=scene_class,
-        thread_id=thread_id,
+        out_dir=out_dir,
         attempt=attempt,
     )
 
@@ -215,7 +213,7 @@ def _run_render_blocking(
     *,
     source: str,
     scene_class: str,
-    thread_id: str,
+    out_dir: Path,
     attempt: int,
 ) -> dict[str, Any]:
     """Spin up a sandbox, run manim, download the MP4, tear the sandbox down.
@@ -298,8 +296,7 @@ def _run_render_blocking(
                 ),
             }
 
-        # Persist locally.
-        out_dir = _OUTPUTS_ROOT / thread_id
+        # Persist locally alongside script.md and scene.py.
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "video.mp4"
         out_path.write_bytes(content)

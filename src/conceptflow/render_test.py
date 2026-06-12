@@ -5,20 +5,22 @@ External services (Modal) are mocked — no real sandbox is created.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 
-def test_module_exposes_render_manim_tool():
+def test_module_exposes_render_manim_tool() -> None:
     from conceptflow.render import render_manim
 
     # langchain @tool produces a BaseTool — it should have a `.name` attribute.
     assert render_manim.name == "render_manim"
 
 
-def test_module_exposes_modal_image_with_manim_deps():
+def test_module_exposes_modal_image_with_manim_deps() -> None:
     from conceptflow import render
 
     assert hasattr(render, "MANIM_IMAGE")
@@ -29,20 +31,29 @@ def test_module_exposes_modal_image_with_manim_deps():
     assert isinstance(render.MANIM_IMAGE, modal.Image)
 
 
-async def test_render_returns_logic_error_when_scene_py_missing():
-    from conceptflow.render import render_manim
+async def test_render_returns_logic_error_when_scene_py_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conceptflow import paths, render
+
+    # Point outputs at an empty temp dir so scene.py is genuinely absent.
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
 
     state = {"files": {}, "messages": []}
     config: RunnableConfig = {"configurable": {"thread_id": "t1"}}
 
-    result = await render_manim.ainvoke({"scene_class": "Foo", "state": state}, config=config)
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
 
     assert result["ok"] is False
     assert result["kind"] == "logic"
-    assert "/scene.py" in result["message"]
+    assert "scene.py" in result["message"]
 
 
-async def test_render_rejects_invalid_scene_class_without_starting_sandbox(monkeypatch):
+async def test_render_rejects_invalid_scene_class_without_starting_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from conceptflow import render
 
     sandbox_create = MagicMock()
@@ -62,6 +73,15 @@ async def test_render_rejects_invalid_scene_class_without_starting_sandbox(monke
     assert "Invalid scene_class" in result["message"]
     sandbox_create.assert_not_called()
     app_lookup.assert_not_called()
+
+
+def _write_scene(
+    outputs_root: Path, thread_id: str, content: str = "from manim import *\n"
+) -> None:
+    """Write a scene.py into the per-thread output dir, as the agent would."""
+    scene_dir = outputs_root / thread_id
+    scene_dir.mkdir(parents=True, exist_ok=True)
+    (scene_dir / "scene.py").write_text(content, encoding="utf-8")
 
 
 def _make_exec_response(*, exit_code: int, output: str) -> MagicMock:
@@ -112,11 +132,14 @@ def _make_fake_sandbox(
     return fake
 
 
-async def test_render_success_writes_mp4_and_returns_path(tmp_path, monkeypatch):
-    from conceptflow import render
+async def test_render_success_writes_mp4_and_returns_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conceptflow import paths, render
 
     # Redirect outputs to a tmp dir.
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "thread-xyz")
 
     # Mock modal.Sandbox.create and ModalSandbox.
     fake_modal_sb = MagicMock()
@@ -150,12 +173,15 @@ async def test_render_success_writes_mp4_and_returns_path(tmp_path, monkeypatch)
     fake_modal_sb.terminate.assert_called_once()
 
 
-async def test_render_selects_final_mp4_not_partial_movie_file(tmp_path, monkeypatch):
+async def test_render_selects_final_mp4_not_partial_movie_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When `find` returns partial movie files alongside the final render,
     the final `<SceneClass>.mp4` (outside partial_movie_files) is chosen."""
-    from conceptflow import render
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-partial")
     fake_modal_sb = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
     monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
@@ -187,10 +213,13 @@ async def test_render_selects_final_mp4_not_partial_movie_file(tmp_path, monkeyp
     assert downloaded == ["/work/media/videos/scene/480p15/Foo.mp4"]
 
 
-async def test_render_returns_render_error_on_nonzero_exit(tmp_path, monkeypatch):
-    from conceptflow import render
+async def test_render_returns_render_error_on_nonzero_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-err")
     fake_modal_sb = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
     monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
@@ -218,10 +247,13 @@ async def test_render_returns_render_error_on_nonzero_exit(tmp_path, monkeypatch
     fake_modal_sb.terminate.assert_called_once()
 
 
-async def test_attempt_counter_reflects_prior_tool_calls(tmp_path, monkeypatch):
-    from conceptflow import render
+async def test_attempt_counter_reflects_prior_tool_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t")
     fake_modal_sb = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
     monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
@@ -244,15 +276,18 @@ async def test_attempt_counter_reflects_prior_tool_calls(tmp_path, monkeypatch):
     assert result["attempt"] == 3
 
 
-async def test_render_refuses_once_attempt_cap_exceeded(tmp_path, monkeypatch):
+async def test_render_refuses_once_attempt_cap_exceeded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When prior render attempts hit the cap, the tool short-circuits.
 
     No sandbox is created and an 'exhausted' stop envelope is returned so
     the cap is enforced in code, not merely advised in the prompt.
     """
-    from conceptflow import render
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t")
     sandbox_create = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", sandbox_create)
     monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
@@ -275,18 +310,20 @@ async def test_render_refuses_once_attempt_cap_exceeded(tmp_path, monkeypatch):
     sandbox_create.assert_not_called()
 
 
-async def test_render_returns_infra_error_when_sandbox_fails_to_start(monkeypatch):
-    from conceptflow import render
+async def test_render_returns_infra_error_when_sandbox_fails_to_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t")
 
     def _explode(*_args, **_kwargs):
         raise render.modal.exception.AuthError("missing token")
 
     monkeypatch.setattr(render.modal.App, "lookup", _explode)
 
-    state = {
-        "files": {"/scene.py": {"content": "x", "encoding": "utf-8"}},
-        "messages": [],
-    }
+    state = {"files": {}, "messages": []}
     config: RunnableConfig = {"configurable": {"thread_id": "t"}}
 
     result = await render.render_manim.ainvoke(
@@ -298,10 +335,13 @@ async def test_render_returns_infra_error_when_sandbox_fails_to_start(monkeypatc
     assert "missing token" in result["message"]
 
 
-async def test_thread_id_defaults_when_absent(tmp_path, monkeypatch):
-    from conceptflow import render
+async def test_thread_id_defaults_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conceptflow import paths, render
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "default")
     fake_modal_sb = MagicMock()
     monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=fake_modal_sb))
     monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
@@ -321,14 +361,15 @@ async def test_thread_id_defaults_when_absent(tmp_path, monkeypatch):
     assert "/default/" in result["mp4_path"]
 
 
-async def test_render_uses_custom_settings(tmp_path, monkeypatch):
-    from conceptflow import render
+async def test_render_uses_custom_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from conceptflow import paths, render
 
     monkeypatch.setenv("MODAL_APP_NAME", "custom-app-name")
     monkeypatch.setenv("MODAL_SANDBOX_TIMEOUT", "123")
     render.get_settings.cache_clear()
 
-    monkeypatch.setattr(render, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t")
     mock_lookup = MagicMock(return_value=MagicMock())
     monkeypatch.setattr(render.modal.App, "lookup", mock_lookup)
     mock_create = MagicMock(return_value=MagicMock())
