@@ -116,7 +116,7 @@ async def render_manim(
     # 3. Read scene.py from disk. The manim-coder writes it there via the
     #    FilesystemBackend; it is no longer present in agent state.
     scene_path = out_dir / "scene.py"
-    if not scene_path.exists():
+    if not scene_path.is_file():
         return {
             "ok": False,
             "kind": "logic",
@@ -125,7 +125,7 @@ async def render_manim(
                 "before calling render_manim."
             ),
         }
-    source: str = scene_path.read_text(encoding="utf-8")
+    source: str = await asyncio.to_thread(scene_path.read_text, encoding="utf-8")
 
     # 4. Compute attempt number from prior tool messages and enforce the cap.
     attempt: int = _count_prior_render_calls(state) + 1

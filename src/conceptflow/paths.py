@@ -19,7 +19,7 @@ from typing import Any
 
 # Where rendered MP4s and intermediate artifacts are written on the local
 # machine. Tests monkeypatch this to redirect to a tmp dir.
-_OUTPUTS_ROOT: Path = Path("./outputs")
+_OUTPUTS_ROOT: Path = Path(__file__).resolve().parents[2] / "outputs"
 
 
 def sanitize_thread_id(thread_id: str | None) -> str:

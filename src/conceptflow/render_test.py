@@ -8,18 +8,19 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 
-def test_module_exposes_render_manim_tool():
+def test_module_exposes_render_manim_tool() -> None:
     from conceptflow.render import render_manim
 
     # langchain @tool produces a BaseTool — it should have a `.name` attribute.
     assert render_manim.name == "render_manim"
 
 
-def test_module_exposes_modal_image_with_manim_deps():
+def test_module_exposes_modal_image_with_manim_deps() -> None:
     from conceptflow import render
 
     assert hasattr(render, "MANIM_IMAGE")
@@ -30,7 +31,9 @@ def test_module_exposes_modal_image_with_manim_deps():
     assert isinstance(render.MANIM_IMAGE, modal.Image)
 
 
-async def test_render_returns_logic_error_when_scene_py_missing(tmp_path, monkeypatch):
+async def test_render_returns_logic_error_when_scene_py_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths, render
 
     # Point outputs at an empty temp dir so scene.py is genuinely absent.
@@ -48,7 +51,9 @@ async def test_render_returns_logic_error_when_scene_py_missing(tmp_path, monkey
     assert "scene.py" in result["message"]
 
 
-async def test_render_rejects_invalid_scene_class_without_starting_sandbox(monkeypatch):
+async def test_render_rejects_invalid_scene_class_without_starting_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from conceptflow import render
 
     sandbox_create = MagicMock()
@@ -127,7 +132,9 @@ def _make_fake_sandbox(
     return fake
 
 
-async def test_render_success_writes_mp4_and_returns_path(tmp_path, monkeypatch):
+async def test_render_success_writes_mp4_and_returns_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths, render
 
     # Redirect outputs to a tmp dir.
@@ -166,7 +173,9 @@ async def test_render_success_writes_mp4_and_returns_path(tmp_path, monkeypatch)
     fake_modal_sb.terminate.assert_called_once()
 
 
-async def test_render_selects_final_mp4_not_partial_movie_file(tmp_path, monkeypatch):
+async def test_render_selects_final_mp4_not_partial_movie_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When `find` returns partial movie files alongside the final render,
     the final `<SceneClass>.mp4` (outside partial_movie_files) is chosen."""
     from conceptflow import paths, render
@@ -204,7 +213,9 @@ async def test_render_selects_final_mp4_not_partial_movie_file(tmp_path, monkeyp
     assert downloaded == ["/work/media/videos/scene/480p15/Foo.mp4"]
 
 
-async def test_render_returns_render_error_on_nonzero_exit(tmp_path, monkeypatch):
+async def test_render_returns_render_error_on_nonzero_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths, render
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
@@ -236,7 +247,9 @@ async def test_render_returns_render_error_on_nonzero_exit(tmp_path, monkeypatch
     fake_modal_sb.terminate.assert_called_once()
 
 
-async def test_attempt_counter_reflects_prior_tool_calls(tmp_path, monkeypatch):
+async def test_attempt_counter_reflects_prior_tool_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths, render
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
@@ -263,7 +276,9 @@ async def test_attempt_counter_reflects_prior_tool_calls(tmp_path, monkeypatch):
     assert result["attempt"] == 3
 
 
-async def test_render_refuses_once_attempt_cap_exceeded(tmp_path, monkeypatch):
+async def test_render_refuses_once_attempt_cap_exceeded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When prior render attempts hit the cap, the tool short-circuits.
 
     No sandbox is created and an 'exhausted' stop envelope is returned so
@@ -295,7 +310,9 @@ async def test_render_refuses_once_attempt_cap_exceeded(tmp_path, monkeypatch):
     sandbox_create.assert_not_called()
 
 
-async def test_render_returns_infra_error_when_sandbox_fails_to_start(tmp_path, monkeypatch):
+async def test_render_returns_infra_error_when_sandbox_fails_to_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths, render
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
@@ -318,7 +335,9 @@ async def test_render_returns_infra_error_when_sandbox_fails_to_start(tmp_path, 
     assert "missing token" in result["message"]
 
 
-async def test_thread_id_defaults_when_absent(tmp_path, monkeypatch):
+async def test_thread_id_defaults_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths, render
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
@@ -342,7 +361,7 @@ async def test_thread_id_defaults_when_absent(tmp_path, monkeypatch):
     assert "/default/" in result["mp4_path"]
 
 
-async def test_render_uses_custom_settings(tmp_path, monkeypatch):
+async def test_render_uses_custom_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from conceptflow import paths, render
 
     monkeypatch.setenv("MODAL_APP_NAME", "custom-app-name")

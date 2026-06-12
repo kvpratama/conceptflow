@@ -28,8 +28,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # NOTE: env loading is deliberately NOT performed at import time. Callers
 # (cli.main, tests, langgraph dev startup) invoke load_environment() once
-# at the right time so the cwd-relative ./.env and user-global config are
+# at the right time so the project-local ./.env and user-global config are
 # read with explicit ordering.
+
+_PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
 
 
 def load_environment() -> None:
@@ -46,7 +48,7 @@ def load_environment() -> None:
     so it claims the available keys first — making ``./.env`` the second-
     tier source.
     """
-    cwd_env = Path.cwd() / ".env"
+    cwd_env = _PROJECT_ROOT / ".env"
     if cwd_env.exists():
         load_dotenv(cwd_env, override=False)  # ./.env fills gaps the OS didn't set
     user_config = Path.home() / ".config" / "conceptflow" / "config.env"

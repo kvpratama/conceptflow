@@ -161,7 +161,7 @@ def test_load_environment_os_env_beats_local_dotenv(
     """OS env wins over ./.env."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "from-os")
     (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=from-local\n")
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("conceptflow.config._PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "no-home"))
 
     load_environment()
@@ -179,7 +179,7 @@ def test_load_environment_local_dotenv_beats_user_config(
     user_cfg = home / ".config" / "conceptflow"
     user_cfg.mkdir(parents=True)
     (user_cfg / "config.env").write_text("ANTHROPIC_API_KEY=from-user\n")
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("conceptflow.config._PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
 
     load_environment()
@@ -196,7 +196,7 @@ def test_load_environment_user_config_fills_when_no_local_or_os(
     user_cfg = home / ".config" / "conceptflow"
     user_cfg.mkdir(parents=True)
     (user_cfg / "config.env").write_text("OPENAI_API_KEY=from-user\n")
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("conceptflow.config._PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
 
     load_environment()
@@ -208,7 +208,7 @@ def test_load_environment_tolerates_missing_user_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No user-config file is fine; no error raised."""
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("conceptflow.config._PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "no-home"))
 
     load_environment()  # must not raise

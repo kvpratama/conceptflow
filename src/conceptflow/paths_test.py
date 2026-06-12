@@ -4,17 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from langchain_core.runnables import RunnableConfig
 
 
-def test_sanitize_thread_id_defaults_when_empty():
+def test_sanitize_thread_id_defaults_when_empty() -> None:
     from conceptflow.paths import sanitize_thread_id
 
     assert sanitize_thread_id(None) == "default"
     assert sanitize_thread_id("") == "default"
 
 
-def test_sanitize_thread_id_strips_path_traversal():
+def test_sanitize_thread_id_strips_path_traversal() -> None:
     from conceptflow.paths import sanitize_thread_id
 
     # Path(...).name collapses to the basename, blocking ../ escapes.
@@ -23,14 +24,16 @@ def test_sanitize_thread_id_strips_path_traversal():
     assert sanitize_thread_id("../../") == "default"
 
 
-def test_sanitize_thread_id_replaces_disallowed_chars_and_caps_length():
+def test_sanitize_thread_id_replaces_disallowed_chars_and_caps_length() -> None:
     from conceptflow.paths import sanitize_thread_id
 
     assert sanitize_thread_id("a b/c!d") == "c_d"
     assert len(sanitize_thread_id("x" * 500)) == 128
 
 
-def test_output_dir_joins_outputs_root_and_sanitizes(tmp_path, monkeypatch):
+def test_output_dir_joins_outputs_root_and_sanitizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
@@ -38,7 +41,9 @@ def test_output_dir_joins_outputs_root_and_sanitizes(tmp_path, monkeypatch):
     assert paths.output_dir(None) == tmp_path / "outputs" / "default"
 
 
-def test_out_dir_from_config_uses_thread_id(tmp_path, monkeypatch):
+def test_out_dir_from_config_uses_thread_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
@@ -46,14 +51,18 @@ def test_out_dir_from_config_uses_thread_id(tmp_path, monkeypatch):
     assert paths.out_dir_from_config(config) == tmp_path / "outputs" / "abc"
 
 
-def test_out_dir_from_config_defaults_when_config_is_none(tmp_path, monkeypatch):
+def test_out_dir_from_config_defaults_when_config_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
     assert paths.out_dir_from_config(None) == tmp_path / "outputs" / "default"
 
 
-def test_out_dir_from_config_defaults_when_thread_id_absent(tmp_path, monkeypatch):
+def test_out_dir_from_config_defaults_when_thread_id_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
@@ -61,7 +70,9 @@ def test_out_dir_from_config_defaults_when_thread_id_absent(tmp_path, monkeypatc
     assert paths.out_dir_from_config({"configurable": {}}) == tmp_path / "outputs" / "default"
 
 
-def test_out_dir_from_config_sanitizes_traversal_in_thread_id(tmp_path, monkeypatch):
+def test_out_dir_from_config_sanitizes_traversal_in_thread_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from conceptflow import paths
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")

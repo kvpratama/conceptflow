@@ -26,7 +26,7 @@ from conceptflow.prompts import ORCHESTRATOR_PROMPT
 from conceptflow.subagents import build_subagents
 
 if TYPE_CHECKING:
-    from langgraph.prebuilt.tool_node import ToolRuntime
+    pass
 
 # Populate os.environ before init_chat_model reads provider keys.
 load_environment()
@@ -35,30 +35,24 @@ _settings = get_settings()
 _model = get_model(_settings)
 
 
-def _make_backend(runtime: ToolRuntime) -> FilesystemBackend:
-    """Build a per-thread FilesystemBackend rooted at the run's output dir.
+async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
+    """Build the ConceptFlow root deep agent graph for the given config.
 
-    The per-run directory depends on ``thread_id`` (known only at runtime), so
-    the backend is created lazily per invocation. Every artifact a run
-    produces — ``script.md`` (script-writer), ``scene.py`` (manim-coder), and
-    ``video.mp4`` (render_manim) — lands together in ``./outputs/<thread_id>/``
-    on disk so a human can review the full output of a run.
+    Inspects the runnable config to decide whether the call is a real
+    execution or a schema-inspection-only call from LangGraph Studio. When
+    ``__is_for_execution__`` is set, a full graph is built with a
+    ``FilesystemBackend`` rooted at the configured output directory plus retry
+    and model-fallback middleware. Otherwise a lightweight schema-only graph is
+    returned (fail-closed) to avoid provisioning a real Modal sandbox.
 
     Args:
-        runtime: The tool runtime, whose ``config`` carries the run's
-            ``thread_id`` under ``configurable``.
+        config: The LangGraph runnable config. The ``configurable`` mapping may
+            contain ``__is_for_execution__`` to opt in to a full execution
+            graph.
 
     Returns:
-        A ``FilesystemBackend`` with ``virtual_mode=True`` rooted at the
-        per-thread output directory.
+        A compiled LangGraph state graph for the ConceptFlow root deep agent.
     """
-    out_dir = out_dir_from_config(runtime.config)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return FilesystemBackend(root_dir=str(out_dir), virtual_mode=True)
-
-
-async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
-
     configurable = dict(config.get("configurable", {}))
     # Default to False (fail-closed): only provision a real Modal sandbox when
     # the caller explicitly signals this is an execution. Schema/read calls
