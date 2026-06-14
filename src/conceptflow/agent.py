@@ -12,7 +12,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from deepagents import create_deep_agent
-from deepagents.backends import FilesystemBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain.agents.middleware import (
     AgentMiddleware,
     ModelFallbackMiddleware,
@@ -22,7 +22,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 from conceptflow.config import get_model, get_model_small, get_settings, load_environment
-from conceptflow.paths import out_dir_from_config
+from conceptflow.paths import out_dir_from_config, skills_dir
 from conceptflow.prompts import ORCHESTRATOR_PROMPT
 from conceptflow.subagents import build_subagents
 
@@ -74,9 +74,18 @@ async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
         ]
 
         # FilesystemBackend.__init__ resolves root_dir, which makes blocking
-        # os.getcwd/realpath calls; build it off the event loop.
-        backend = await asyncio.to_thread(
+        # os.getcwd/realpath calls; build both backends off the event loop.
+        workspace_backend = await asyncio.to_thread(
             FilesystemBackend, root_dir=str(out_dir), virtual_mode=True
+        )
+        skills_backend = await asyncio.to_thread(
+            FilesystemBackend, root_dir=str(skills_dir()), virtual_mode=True
+        )
+        # CompositeBackend strips the route prefix before delegating, so the
+        # skills backend is rooted at the directory containing agent namespaces.
+        backend = CompositeBackend(
+            default=workspace_backend,
+            routes={"/skills/": skills_backend},
         )
 
         # Compiled LangGraph for the ConceptFlow root deep agent.
@@ -86,6 +95,7 @@ async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
             middleware=base_middleware,
             subagents=build_subagents(),
             backend=backend,
+            skills=["/skills/orchestrator/"],
             name="conceptflow",
         )
 

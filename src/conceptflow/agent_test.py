@@ -22,7 +22,7 @@ async def test_make_graph_execution_mode_uses_filesystem_backend(
 ) -> None:
     import inspect
 
-    from deepagents.backends import FilesystemBackend
+    from deepagents.backends import CompositeBackend, FilesystemBackend
     from deepagents.middleware.filesystem import FilesystemMiddleware
 
     from conceptflow import paths
@@ -57,17 +57,80 @@ async def test_make_graph_execution_mode_uses_filesystem_backend(
                 if isinstance(value, FilesystemBackend):
                     backend = value
                     break
+                if isinstance(value, CompositeBackend) and isinstance(
+                    value.default, FilesystemBackend
+                ):
+                    backend = value.default
+                    break
                 if isinstance(value, FilesystemMiddleware) and isinstance(
                     value.backend, FilesystemBackend
                 ):
                     backend = value.backend
                     break
+                if isinstance(value, FilesystemMiddleware) and isinstance(
+                    value.backend, CompositeBackend
+                ):
+                    default = value.backend.default
+                    if isinstance(default, FilesystemBackend):
+                        backend = default
+                        break
             if backend is not None:
                 break
         if backend is not None:
             break
 
     assert isinstance(backend, FilesystemBackend)
+
+
+async def test_make_graph_execution_mode_uses_composite_skills_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Assert execution mode mounts repo skills under /skills/."""
+    import inspect
+
+    from deepagents.backends import CompositeBackend, FilesystemBackend
+
+    from conceptflow import paths
+    from conceptflow.agent import make_graph
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    graph = await make_graph(
+        config={"configurable": {"thread_id": "t1", "__is_for_execution__": True}}
+    )
+
+    from langgraph.prebuilt import ToolNode
+
+    composite: CompositeBackend | None = None
+    tool_node = graph.get_graph().nodes["tools"].data
+    assert isinstance(tool_node, ToolNode)
+    for tool in tool_node.tools_by_name.values():
+        for candidate in (
+            getattr(tool, "coroutine", None),
+            getattr(tool, "func", None),
+        ):
+            if candidate is None:
+                continue
+            try:
+                closure = inspect.getclosurevars(candidate)
+            except TypeError:
+                continue
+            for value in closure.nonlocals.values():
+                if isinstance(value, CompositeBackend):
+                    composite = value
+                    break
+                backend_attr = getattr(value, "backend", None)
+                if isinstance(backend_attr, CompositeBackend):
+                    composite = backend_attr
+                    break
+            if composite is not None:
+                break
+        if composite is not None:
+            break
+
+    assert isinstance(composite, CompositeBackend)
+    assert "/skills/" in composite.routes
+    assert isinstance(composite.routes["/skills/"], FilesystemBackend)
+    assert isinstance(composite.default, FilesystemBackend)
 
 
 def test_build_subagents_is_called_by_agent_module() -> None:

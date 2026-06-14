@@ -22,3 +22,10 @@ def test_manim_coder_prompt_mentions_render_tool_and_retry_cap():
 
 def test_script_writer_prompt_writes_script_md():
     assert "/script.md" in prompts.SCRIPT_WRITER_PROMPT
+
+
+def test_prompts_reference_their_skills() -> None:
+    """Assert each agent prompt points to its on-demand skill."""
+    assert "orchestrator-workflow" in prompts.ORCHESTRATOR_PROMPT
+    assert "script-writing-3b1b" in prompts.SCRIPT_WRITER_PROMPT
+    assert "manim-ce-coding" in prompts.MANIM_CODER_PROMPT

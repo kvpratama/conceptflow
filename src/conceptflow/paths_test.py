@@ -82,3 +82,12 @@ def test_out_dir_from_config_sanitizes_traversal_in_thread_id(
     result: Path = paths.out_dir_from_config(config)
     assert result == tmp_path / "outputs" / "passwd"
     assert tmp_path / "outputs" in result.parents
+
+
+def test_skills_dir_points_at_repo_skills_package() -> None:
+    from conceptflow import paths
+
+    skills = paths.skills_dir()
+    assert skills == Path(paths.__file__).resolve().parent / "skills"
+    assert skills.name == "skills"
+    assert skills.is_absolute()

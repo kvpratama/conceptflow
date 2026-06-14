@@ -38,3 +38,15 @@ def test_manim_coder_includes_render_manim_tool():
     # And exactly one custom tool.
     assert len(tools) == 1
     assert tools[0] is render_manim
+
+
+def test_subagents_declare_namespace_scoped_skills() -> None:
+    """Assert each subagent only sees its own skill namespace."""
+    subs = {s["name"]: s for s in build_subagents()}
+
+    assert subs["script-writer"]["skills"] == ["/skills/script-writer/"]
+    assert subs["manim-coder"]["skills"] == ["/skills/manim-coder/"]
+
+    for name, spec in subs.items():
+        for source in spec["skills"]:
+            assert source == f"/skills/{name}/"

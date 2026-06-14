@@ -33,6 +33,7 @@ def build_subagents() -> list[SubAgent]:
                 "the result to /script.md in the shared workspace."
             ),
             system_prompt=prompts.SCRIPT_WRITER_PROMPT,
+            skills=["/skills/script-writer/"],
         ),
         SubAgent(
             name="manim-coder",
@@ -43,5 +44,6 @@ def build_subagents() -> list[SubAgent]:
             ),
             system_prompt=prompts.MANIM_CODER_PROMPT,
             tools=[render_manim],
+            skills=["/skills/manim-coder/"],
         ),
     ]
