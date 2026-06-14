@@ -10,7 +10,7 @@ from deepagents import SubAgent
 
 from conceptflow import prompts
 from conceptflow.config import get_settings
-from conceptflow.render import render_manim
+from conceptflow.render import render_manim, stitch_videos
 
 
 def build_subagents() -> list[SubAgent]:
@@ -43,7 +43,7 @@ def build_subagents() -> list[SubAgent]:
                 f"{max_render_attempts} render attempts on render errors."
             ),
             system_prompt=prompts.MANIM_CODER_PROMPT,
-            tools=[render_manim],
+            tools=[render_manim, stitch_videos],
             skills=["/skills/manim-coder/"],
         ),
     ]

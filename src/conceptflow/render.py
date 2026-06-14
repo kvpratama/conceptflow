@@ -1,24 +1,29 @@
-"""Custom `render_manim` tool for ConceptFlow.
+"""Custom `render_manim` and `stitch_videos` tools for ConceptFlow.
 
-Renders a Manim CE scene from `./outputs/<thread_id>/scene.py` on disk
-inside a Modal sandbox, then downloads the resulting MP4 to
-`./outputs/<thread_id>/video.mp4` on the local machine.
+render_manim:
+    Renders a single Manim CE scene from `./outputs/<thread_id>/scene.py`
+    inside a Modal sandbox, then downloads the result to
+    `./outputs/<thread_id>/video_<SceneClass>.mp4`.
+    Retry budget is tracked per scene_class, not globally.
 
-All Modal interaction is contained in this module so the rest of the
-codebase can be tested without touching the network.
+stitch_videos:
+    Uploads per-scene MP4s to a Modal sandbox, runs ffmpeg concat inside
+    it, and downloads the result to `./outputs/<thread_id>/video.mp4`.
+    Single-scene shortcut: copies the file locally without spawning a sandbox.
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Annotated, Any
 
 import modal
 import modal.exception
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_modal import ModalSandbox
@@ -54,13 +59,15 @@ MANIM_IMAGE: modal.Image = (
     .uv_pip_install("manim==0.20.1")
 )
 
-# Hard wall-clock cap on a single render invocation.
+# Hard wall-clock cap on a single render or stitch invocation.
 _RENDER_TIMEOUT_SECONDS: int = 60 * 5
 
-# Per-thread output directory layout lives in `conceptflow.paths` so the
-# orchestrator and the render tool share a single helper.
-
 _SCENE_CLASS_RE: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+# ---------------------------------------------------------------------------
+# render_manim
+# ---------------------------------------------------------------------------
 
 
 @tool
@@ -69,52 +76,47 @@ async def render_manim(
     state: Annotated[dict[str, Any], InjectedState],
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    """Render the Manim scene defined at `./outputs/<thread_id>/scene.py`
-    to an MP4.
+    """Render one Manim scene class from /scene.py to /video_<SceneClass>.mp4.
 
     Args:
-        scene_class: Name of the `Scene` subclass inside the on-disk `scene.py`
-            module to render (e.g. ``"PythagoreanIntro"``).
+        scene_class: Name of the Scene subclass to render
+            (e.g. ``"PythagoreanIntro"``).
 
     Returns:
-        A dict in one of three shapes:
+        A dict in one of these shapes:
 
         * Success::
 
-              {"ok": True, "mp4_path": "./outputs/<thread_id>/video.mp4"}
+              {"ok": True, "mp4_path": "/video_<SceneClass>.mp4"}
 
         * Render failure (Manim subprocess exited non-zero)::
 
               {"ok": False, "kind": "render", "stderr": "...", "attempt": n}
 
-        * Infrastructure failure (Modal API / sandbox spawn error)::
+        * Infrastructure failure (Modal API / sandbox error)::
 
               {"ok": False, "kind": "infra", "message": "..."}
 
-        * Logic failure (missing `./outputs/<thread_id>/scene.py` on disk)::
+        * Logic failure (bad scene_class or missing scene.py)::
 
               {"ok": False, "kind": "logic", "message": "..."}
 
-        * Exhausted retry budget (attempt exceeds ``max_render_attempts``)::
+        * Exhausted per-scene retry budget::
 
               {"ok": False, "kind": "exhausted", "message": "...", "attempt": n}
     """
-    # 1. Validate scene_class first (cheap, no I/O).
     if _SCENE_CLASS_RE.fullmatch(scene_class) is None:
         return {
             "ok": False,
             "kind": "logic",
             "message": (
-                "Invalid scene_class. Expected a valid Python identifier matching "
-                "^[A-Za-z_][A-Za-z0-9_]*$."
+                "Invalid scene_class. Expected a valid Python identifier "
+                "matching ^[A-Za-z_][A-Za-z0-9_]*$."
             ),
         }
 
-    # 2. Resolve the per-thread output directory (shared with the backend).
     out_dir = out_dir_from_config(config)
 
-    # 3. Read scene.py from disk. The manim-coder writes it there via the
-    #    FilesystemBackend; it is no longer present in agent state.
     scene_path = out_dir / "scene.py"
     if not scene_path.is_file():
         return {
@@ -127,8 +129,8 @@ async def render_manim(
         }
     source: str = await asyncio.to_thread(scene_path.read_text, encoding="utf-8")
 
-    # 4. Compute attempt number from prior tool messages and enforce the cap.
-    attempt: int = _count_prior_render_calls(state) + 1
+    # Per-scene retry budget.
+    attempt: int = _count_prior_render_calls(state, scene_class) + 1
     max_attempts: int = get_settings().max_render_attempts
     if attempt > max_attempts:
         return {
@@ -136,12 +138,12 @@ async def render_manim(
             "kind": "exhausted",
             "attempt": attempt,
             "message": (
-                f"Render retry budget exhausted after {max_attempts} attempts. "
-                "Stop retrying and report the last render failure to the orchestrator."
+                f"Render retry budget exhausted after {max_attempts} attempts "
+                f"for scene '{scene_class}'. Stop retrying and report the last "
+                "render failure to the orchestrator."
             ),
         }
 
-    # 5. Run the render.
     return await _run_render(
         source=source,
         scene_class=scene_class,
@@ -150,22 +152,190 @@ async def render_manim(
     )
 
 
-def _count_prior_render_calls(state: dict[str, Any]) -> int:
-    """Count prior ToolMessages for `render_manim` in the message history."""
+# ---------------------------------------------------------------------------
+# stitch_videos
+# ---------------------------------------------------------------------------
+
+
+@tool
+async def stitch_videos(
+    mp4_paths: list[str],
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """Concatenate per-scene MP4s into a single /video.mp4.
+
+    Uploads the files to a Modal sandbox and runs ffmpeg concat inside it,
+    so no local ffmpeg installation is required.
+
+    Args:
+        mp4_paths: Ordered list of mp4_path values returned by render_manim,
+            e.g. ``["/video_Scene1.mp4", "/video_Scene2.mp4"]``.
+
+    Returns:
+        A dict in one of these shapes:
+
+        * Success::
+
+              {"ok": True, "mp4_path": "/video.mp4"}
+
+        * Logic failure (empty list or missing file on disk)::
+
+              {"ok": False, "kind": "logic", "message": "..."}
+
+        * Infrastructure failure (Modal API / sandbox error or ffmpeg error)::
+
+              {"ok": False, "kind": "infra", "message": "..."}
+    """
+    if not mp4_paths:
+        return {
+            "ok": False,
+            "kind": "logic",
+            "message": "mp4_paths is empty. Provide at least one rendered MP4 path.",
+        }
+
+    out_dir = out_dir_from_config(config)
+
+    # Resolve logical paths ("/video_Foo.mp4") to local disk paths.
+    local_paths: list[Path] = []
+    for logical in mp4_paths:
+        local_path = out_dir / logical.lstrip("/")
+        if not local_path.is_file():
+            return {
+                "ok": False,
+                "kind": "logic",
+                "message": (
+                    f"File not found: {local_path}. Ensure render_manim succeeded "
+                    "for all scenes before calling stitch_videos."
+                ),
+            }
+        local_paths.append(local_path)
+
+    # Single scene: skip the sandbox, just copy locally.
+    if len(local_paths) == 1:
+        out_path = out_dir / "video.mp4"
+        await asyncio.to_thread(shutil.copy2, str(local_paths[0]), str(out_path))
+        return {"ok": True, "mp4_path": "/video.mp4"}
+
+    return await asyncio.to_thread(_stitch_blocking, local_paths, out_dir)
+
+
+def _stitch_blocking(local_paths: list[Path], out_dir: Path) -> dict[str, Any]:
+    """Upload per-scene MP4s to a Modal sandbox, run ffmpeg concat, download result.
+
+    This function is fully synchronous and intended to be invoked from a
+    worker thread (see :func:`stitch_videos`).
+    """
+    try:
+        settings = get_settings()
+        hydrated_app = modal.App.lookup(settings.modal_app_name, create_if_missing=True)
+
+        modal_sb = modal.Sandbox.create(
+            "sleep",
+            "infinity",
+            app=hydrated_app,
+            image=MANIM_IMAGE,
+            timeout=settings.modal_sandbox_timeout,
+            workdir="/work",
+        )
+    except modal.exception.Error as exc:
+        return {
+            "ok": False,
+            "kind": "infra",
+            "message": f"Modal sandbox failed to start: {exc!s}",
+        }
+
+    try:
+        sandbox = ModalSandbox(sandbox=modal_sb)
+
+        # Build the concat list and collect file uploads in one pass.
+        concat_lines: list[str] = []
+        file_uploads: list[tuple[str, bytes]] = []
+        for p in local_paths:
+            remote_path = f"/work/{p.name}"
+            concat_lines.append(f"file '{remote_path}'")
+            file_uploads.append((remote_path, p.read_bytes()))
+
+        concat_content = "\n".join(concat_lines).encode("utf-8")
+        sandbox.upload_files(
+            [
+                ("/work/concat_list.txt", concat_content),
+                *file_uploads,
+            ]
+        )
+
+        result = sandbox.execute(
+            "ffmpeg -y -f concat -safe 0 -i /work/concat_list.txt -c copy /work/output.mp4",
+            timeout=_RENDER_TIMEOUT_SECONDS,
+        )
+        if result.exit_code != 0:
+            return {
+                "ok": False,
+                "kind": "infra",
+                "message": f"ffmpeg concat failed:\n{result.output}",
+            }
+
+        downloads = sandbox.download_files(["/work/output.mp4"])
+        content = downloads[0].content
+        if content is None:
+            return {
+                "ok": False,
+                "kind": "infra",
+                "message": (f"Failed to download stitched video: {downloads[0].error!r}"),
+            }
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "video.mp4"
+        out_path.write_bytes(content)
+        return {"ok": True, "mp4_path": "/video.mp4"}
+
+    except modal.exception.Error as exc:
+        return {
+            "ok": False,
+            "kind": "infra",
+            "message": f"Modal sandbox error during stitch: {exc!s}",
+        }
+    finally:
+        try:
+            modal_sb.terminate()
+        except Exception:  # noqa: BLE001 — teardown failure is non-fatal
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _count_prior_render_calls(state: dict[str, Any], scene_class: str) -> int:
+    """Count completed render_manim calls for a specific scene_class.
+
+    Correlates AIMessage tool_calls with their ToolMessage responses so that
+    only completed attempts are counted, and only for the given scene_class.
+    """
     messages = state.get("messages") or []
+
+    # Map tool_call_id -> scene_class for every render_manim invocation.
+    render_ids: dict[str, str] = {}
+    for m in messages:
+        if isinstance(m, AIMessage):
+            for tc in getattr(m, "tool_calls", []):
+                if isinstance(tc, dict) and tc.get("name") == "render_manim":
+                    render_ids[tc["id"]] = tc.get("args", {}).get("scene_class", "")
+
+    # Count ToolMessages whose call completed for this scene_class.
     return sum(
         1
         for m in messages
-        if isinstance(m, ToolMessage) and getattr(m, "name", None) == "render_manim"
+        if (
+            isinstance(m, ToolMessage)
+            and getattr(m, "name", None) == "render_manim"
+            and render_ids.get(getattr(m, "tool_call_id", None)) == scene_class  # ty:ignore[invalid-argument-type]
+        )
     )
 
 
 def _select_final_mp4(candidates: list[str], scene_class: str) -> str | None:
-    """Pick the final rendered MP4 from a list of `find` results.
-
-    Manim leaves intermediate clips under ``partial_movie_files/`` in addition
-    to the final ``<SceneClass>.mp4``. This selects the final render and never
-    a partial.
+    """Pick the final rendered MP4, excluding Manim's partial_movie_files clips.
 
     Args:
         candidates: Absolute MP4 paths found under the sandbox media dir.
@@ -177,8 +347,6 @@ def _select_final_mp4(candidates: list[str], scene_class: str) -> str | None:
     final = [c for c in candidates if "partial_movie_files" not in c.split("/")]
     if not final:
         return None
-    # Prefer an exact ``<SceneClass>.mp4`` basename match; fall back to the
-    # first non-partial candidate.
     target = f"{scene_class}.mp4"
     for path in final:
         if path.rsplit("/", 1)[-1] == target:
@@ -193,13 +361,7 @@ async def _run_render(
     out_dir: Path,
     attempt: int,
 ) -> dict[str, Any]:
-    """Run the blocking Modal render in a worker thread.
-
-    The Modal SDK and ``langchain-modal`` expose only synchronous APIs, which
-    would block the event loop if awaited inline. We offload the entire
-    sandbox lifecycle to a thread via :func:`asyncio.to_thread` so the ASGI
-    server stays responsive.
-    """
+    """Offload the blocking Modal render to a worker thread."""
     return await asyncio.to_thread(
         _run_render_blocking,
         source=source,
@@ -225,9 +387,6 @@ def _run_render_blocking(
     worker thread (see :func:`_run_render`).
     """
     try:
-        # Hydrate (or create) the named app on Modal's side before spawning
-        # the sandbox. Done lazily here so importing this module never
-        # requires Modal credentials.
         settings = get_settings()
         hydrated_app = modal.App.lookup(settings.modal_app_name, create_if_missing=True)
 
@@ -248,20 +407,16 @@ def _run_render_blocking(
 
     try:
         sandbox = ModalSandbox(sandbox=modal_sb)
-
-        # Upload /scene.py into the sandbox workdir.
         sandbox.upload_files([("/work/scene.py", source.encode("utf-8"))])
 
-        # Render. langchain-modal's ExecuteResponse exposes a single
-        # combined `output` stream plus `exit_code`; we surface that output
-        # under `stderr` so the manim-coder subagent's existing prompt
-        # (which reads `stderr`) keeps working.
+        # langchain-modal's ExecuteResponse exposes a single combined `output`
+        # stream plus `exit_code`; we surface that output under `stderr` so the
+        # manim-coder subagent's prompt (which reads `stderr`) keeps working.
         exec_result = sandbox.execute(
             f"cd /work && manim -ql scene.py {scene_class}",
             timeout=_RENDER_TIMEOUT_SECONDS,
         )
-        exit_code = exec_result.exit_code
-        if exit_code != 0:
+        if exec_result.exit_code != 0:
             return {
                 "ok": False,
                 "kind": "render",
@@ -269,10 +424,9 @@ def _run_render_blocking(
                 "attempt": attempt,
             }
 
-        # Locate the produced MP4. Manim writes the final render to
+        # Locate the final MP4. Manim writes it to
         # /work/media/videos/scene/<quality>/<SceneClass>.mp4 and also leaves
         # intermediate clips under .../partial_movie_files/<SceneClass>/*.mp4.
-        # We must pick the final render, never a partial.
         find = sandbox.execute("find /work/media -name '*.mp4' -type f")
         candidates = [line.strip() for line in find.output.splitlines() if line.strip()]
         remote_mp4 = _select_final_mp4(candidates, scene_class)
@@ -284,7 +438,6 @@ def _run_render_blocking(
                 "attempt": attempt,
             }
 
-        # Download.
         downloads = sandbox.download_files([remote_mp4])
         content = downloads[0].content
         if content is None:
@@ -296,12 +449,11 @@ def _run_render_blocking(
                 ),
             }
 
-        # Persist locally alongside script.md and scene.py.
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "video.mp4"
+        out_path = out_dir / f"video_{scene_class}.mp4"
         out_path.write_bytes(content)
 
-        return {"ok": True, "mp4_path": str(out_path)}
+        return {"ok": True, "mp4_path": f"/video_{scene_class}.mp4"}
 
     except modal.exception.Error as exc:
         return {
@@ -310,7 +462,6 @@ def _run_render_blocking(
             "message": f"Modal sandbox error during render: {exc!s}",
         }
     finally:
-        # Best-effort teardown; ignore errors here.
         try:
             modal_sb.terminate()
         except Exception:  # noqa: BLE001 — teardown failure is non-fatal
