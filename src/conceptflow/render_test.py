@@ -614,3 +614,35 @@ async def test_stitch_videos_sandbox_creation_fails(
     assert result["ok"] is False
     assert result["kind"] == "infra"
     assert "Modal sandbox failed to start" in result["message"]
+
+
+async def test_stitch_videos_rejects_path_traversal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from conceptflow import paths
+    from conceptflow.render import stitch_videos
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    config: RunnableConfig = {"configurable": {"thread_id": "t"}}
+
+    # Create outputs root and thread subdirs
+    t_dir = tmp_path / "outputs" / "t"
+    t_dir.mkdir(parents=True, exist_ok=True)
+
+    # Rejects path traversal and non-absolute logical paths
+    test_cases = [
+        "/../secret.txt",
+        "/a/../../b",
+        "../x",
+        "/video_Foo.mp4/../bar",
+        "/",
+        "/..",
+        "video_Foo.mp4",
+        "/video_Foo.mp4/abc",
+    ]
+
+    for bad_path in test_cases:
+        result = await stitch_videos.ainvoke({"mp4_paths": [bad_path]}, config=config)
+        assert result["ok"] is False, f"Path '{bad_path}' should have been rejected."
+        assert result["kind"] == "logic"
+        assert "Invalid path" in result["message"]

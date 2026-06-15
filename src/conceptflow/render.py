@@ -197,18 +197,47 @@ async def stitch_videos(
 
     # Resolve logical paths ("/video_Foo.mp4") to local disk paths.
     local_paths: list[Path] = []
+    out_dir_resolved = out_dir.resolve()
     for logical in mp4_paths:
-        local_path = out_dir / logical.lstrip("/")
-        if not local_path.is_file():
+        if not logical.startswith("/"):
             return {
                 "ok": False,
                 "kind": "logic",
                 "message": (
-                    f"File not found: {local_path}. Ensure render_manim succeeded "
+                    f"Invalid path '{logical}': must start with '/' as an absolute "
+                    "logical workspace path."
+                ),
+            }
+
+        # Prefer using Path(logical).name to drop directories, and then validate the name.
+        name = Path(logical).name
+        if name != logical.lstrip("/") or name in ("", ".", "..") or "/" in name or "\\" in name:
+            return {
+                "ok": False,
+                "kind": "logic",
+                "message": (
+                    f"Invalid path '{logical}': path traversal or subdirectories are not allowed."
+                ),
+            }
+
+        candidate = (out_dir / name).resolve()
+        if out_dir_resolved not in candidate.parents or candidate == out_dir_resolved:
+            return {
+                "ok": False,
+                "kind": "logic",
+                "message": f"Invalid path '{logical}': path escapes the output directory.",
+            }
+
+        if not candidate.is_file():
+            return {
+                "ok": False,
+                "kind": "logic",
+                "message": (
+                    f"File not found: {candidate}. Ensure render_manim succeeded "
                     "for all scenes before calling stitch_videos."
                 ),
             }
-        local_paths.append(local_path)
+        local_paths.append(candidate)
 
     # Single scene: skip the sandbox, just copy locally.
     if len(local_paths) == 1:
@@ -224,6 +253,15 @@ def _stitch_blocking(local_paths: list[Path], out_dir: Path) -> dict[str, Any]:
 
     This function is fully synchronous and intended to be invoked from a
     worker thread (see :func:`stitch_videos`).
+
+    Args:
+        local_paths: List of absolute file paths to the local per-scene MP4 files.
+        out_dir: The directory where the final stitched video should be saved.
+
+    Returns:
+        A dictionary containing the result of the stitch operation. On success,
+        keys are {"ok": True, "mp4_path": "/video.mp4"}. On failure, keys
+        include {"ok": False, "kind": str, "message": str}.
     """
     try:
         settings = get_settings()
@@ -311,6 +349,13 @@ def _count_prior_render_calls(state: dict[str, Any], scene_class: str) -> int:
 
     Correlates AIMessage tool_calls with their ToolMessage responses so that
     only completed attempts are counted, and only for the given scene_class.
+
+    Args:
+        state: The current LangGraph state dictionary.
+        scene_class: The class name of the scene to count renders for.
+
+    Returns:
+        The number of completed render_manim attempts for the specified scene class.
     """
     messages = state.get("messages") or []
 
@@ -361,7 +406,17 @@ async def _run_render(
     out_dir: Path,
     attempt: int,
 ) -> dict[str, Any]:
-    """Offload the blocking Modal render to a worker thread."""
+    """Offload the blocking Modal render to a worker thread.
+
+    Args:
+        source: The Manim Python source code content.
+        scene_class: The name of the scene class to render.
+        out_dir: The directory where the rendered video should be saved.
+        attempt: The current attempt number for this render.
+
+    Returns:
+        A dictionary containing the result of the render invocation.
+    """
     return await asyncio.to_thread(
         _run_render_blocking,
         source=source,
@@ -385,6 +440,17 @@ def _run_render_blocking(
 
     This function is fully synchronous and intended to be invoked from a
     worker thread (see :func:`_run_render`).
+
+    Args:
+        source: The Manim Python source code content.
+        scene_class: The name of the scene class to render.
+        out_dir: The directory where the rendered video should be saved.
+        attempt: The current attempt number for this render.
+
+    Returns:
+        A dictionary containing the result of the render invocation. On success,
+        keys are {"ok": True, "mp4_path": str}. On failure, keys include
+        {"ok": False, "kind": str, ...}.
     """
     try:
         settings = get_settings()
