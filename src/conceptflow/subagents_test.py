@@ -23,10 +23,10 @@ def test_script_writer_uses_correct_prompt_and_no_extra_tools():
     assert "tools" not in sw or sw["tools"] == []
 
 
-def test_manim_coder_includes_render_manim_tool():
+def test_manim_coder_includes_render_and_stitch_tools():
     from langchain_core.tools import BaseTool
 
-    from conceptflow.render import render_manim
+    from conceptflow.render import render_manim, stitch_videos
 
     subs = {s["name"]: s for s in build_subagents()}
     mc = subs["manim-coder"]
@@ -35,9 +35,9 @@ def test_manim_coder_includes_render_manim_tool():
     tools = list(mc["tools"])
     tool_names = {t.name for t in tools if isinstance(t, BaseTool)}
     assert "render_manim" in tool_names
-    # And exactly one custom tool.
-    assert len(tools) == 1
-    assert tools[0] is render_manim
+    assert "stitch_videos" in tool_names
+    assert render_manim in tools
+    assert stitch_videos in tools
 
 
 def test_subagents_declare_namespace_scoped_skills() -> None:
