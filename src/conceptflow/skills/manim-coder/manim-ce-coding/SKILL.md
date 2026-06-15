@@ -19,8 +19,11 @@ description: Manim Community Edition coding rules, LaTeX-avoidance, multi-scene 
 - All Scene subclasses live in one `/scene.py` file.
 - Each class is self-contained: never reference objects defined in another class.
 - `render_manim` is called once per class, in plan order.
-- Each call overwrites `/video.mp4` — rendering all scenes confirms they
-  are error-free, but only the last one survives on disk.
+- Each successful render saves to a separate `/video_<SceneClass>.mp4`.
+- When fixing a failed scene, limit edits to that scene's class only —
+  do not touch classes that have already rendered successfully.
+- After all scenes render, call `stitch_videos` with the ordered list of
+  paths to produce the final `/video.mp4`.
 
 ## Avoid LaTeX Unless The Plan Demands Math
 - Prefer `Text("...")` over `Tex` / `MathTex`.
@@ -37,29 +40,40 @@ description: Manim Community Edition coding rules, LaTeX-avoidance, multi-scene 
 
 ## Render-Error Playbook
 
-The retry budget is global — it depletes across every render_manim call
-in this run, not per scene. For a 3-scene script, each scene's first
-render is already attempt 1, 2, 3 globally.
-
-For each `render_manim(scene_class="<ClassName>")` call:
+The retry budget is per scene_class — retries for Scene1 do not consume
+budget for Scene2.
 
   ok=True
-  → move to the next scene (or finish if last).
+  -> collect mp4_path; move to the next scene (or stitch if last).
 
   ok=False, kind="render"
-  → read stderr and hold onto it — you will need it if the budget runs out.
-    Common causes:
-      - missing `from manim import *`
-      - LaTeX / MathTex error → replace with Text
-      - class name mismatch with /script.md header
-      - typo'd mobject or animation name (NameError)
-    Fix via `edit_file("/scene.py", ...)` scoped to that scene's class only,
-    then retry. Do not touch classes that have already rendered successfully.
+  -> read stderr and hold onto it — you will need it if budget runs out.
+     Common causes:
+       - missing `from manim import *`
+       - LaTeX / MathTex error  ->  replace with Text
+       - class name mismatch with /script.md header
+       - typo'd mobject or animation name (NameError)
+     Fix via `edit_file("/scene.py", ...)` scoped to that scene's class
+     only, then retry.
 
   ok=False, kind="exhausted"
-  → budget gone. The exhausted response has no stderr field — surface the
-    stderr from your most recent kind="render" failure instead. STOP.
-    Do NOT call render_manim again.
+  -> budget gone for this scene. The exhausted response has no stderr
+     field — surface the stderr from your most recent kind="render"
+     failure for this scene instead. STOP.
+     Do NOT call render_manim again.
 
   ok=False, kind="infra" or kind="logic"
-  → return message verbatim and STOP. Do NOT retry.
+  -> return message verbatim and STOP. Do NOT retry.
+
+## Stitch-Error Playbook
+
+  ok=True
+  -> final reply is `/video.mp4` and NOTHING else.
+
+  ok=False, kind="logic"
+  -> a path in the list is wrong or a file is missing on disk. Verify
+     that mp4_paths matches the collected render outputs exactly, then
+     retry once.
+
+  ok=False, kind="infra"
+  -> return message verbatim and STOP. Do NOT retry.
