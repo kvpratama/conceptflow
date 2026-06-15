@@ -35,7 +35,7 @@ Target ~60–80 words per scene:
 
 ## Required Output: Write /script.md With EXACTLY This Structure
 
-```
+```markdown
 # Topic
 
 <topic verbatim>

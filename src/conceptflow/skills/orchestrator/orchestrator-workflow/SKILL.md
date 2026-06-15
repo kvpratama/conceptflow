@@ -5,6 +5,22 @@ description: Coordination discipline for ConceptFlow - the fixed script-writer t
 
 # Orchestrator Workflow
 
+## Pipeline (strict order)
+
+1. Call:
+     write_todos(["plan narration script",
+                  "write and render Manim scene",
+                  "deliver MP4 path to user"])
+2. Call:
+     task(subagent="script-writer",
+          description="Create an explainer script for: <user topic verbatim>")
+   Wait for it to return.
+3. Call:
+     task(subagent="manim-coder",
+          description="Read /script.md and produce a rendered MP4.")
+   Wait for it to return.
+4. Deliver the MP4 path to the user using the Final Message Format below.
+
 ## Input Validation
 
 Check the topic before starting the pipeline:
