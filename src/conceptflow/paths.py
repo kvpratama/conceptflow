@@ -21,6 +21,10 @@ from typing import Any
 # machine. Tests monkeypatch this to redirect to a tmp dir.
 _OUTPUTS_ROOT: Path = Path(__file__).resolve().parents[2] / "outputs"
 
+# Repo-local directory holding agent skill packages (read-only reference
+# material), namespaced per owning agent: skills/<agent>/<skill>/SKILL.md.
+_SKILLS_ROOT: Path = Path(__file__).resolve().parent / "skills"
+
 
 def sanitize_thread_id(thread_id: str | None) -> str:
     """Return a filesystem-safe directory name derived from a thread id.
@@ -73,3 +77,17 @@ def out_dir_from_config(config: Mapping[str, Any] | None) -> Path:
     """
     configurable = (config or {}).get("configurable") or {}
     return output_dir(configurable.get("thread_id"))
+
+
+def skills_dir() -> Path:
+    """Return the absolute path to the repo's agent-skills directory.
+
+    Unlike :func:`output_dir`, this is a static location inside the
+    installed package (``src/conceptflow/skills``), not a per-thread path.
+    It is the root that the execution graph mounts under the ``/skills/``
+    route of its ``CompositeBackend``.
+
+    Returns:
+        The ``<package>/skills`` directory as a ``Path``.
+    """
+    return _SKILLS_ROOT
