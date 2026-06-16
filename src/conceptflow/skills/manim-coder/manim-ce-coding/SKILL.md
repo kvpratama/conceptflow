@@ -51,7 +51,7 @@ class Scene1(VoiceoverScene):
         self.set_speech_service(build_speech_service())
 
         narration = "Here is the idea, one sentence at a time."
-        caption = Text(narration, font_size=24).to_edge(DOWN)
+        caption = make_caption(narration)
         with self.voiceover(text=narration) as tracker:
             self.add(caption)
             circle = Circle()
@@ -59,15 +59,31 @@ class Scene1(VoiceoverScene):
         self.remove(caption)
 ```
 
+Captions MUST fit on screen. Manim's `Text` does NOT wrap, so a 1–3 sentence
+narration rendered as a single `Text` will run off both edges. Define this
+helper at module level (after the imports) and use it for every caption:
+
+```python
+def make_caption(text):
+    caption = Text(text, font_size=24).to_edge(DOWN)
+    max_width = config.frame_width - 1
+    if caption.width > max_width:
+        caption.scale_to_fit_width(max_width)
+    return caption
+```
+
 Rules:
-- Pass the scene's narration to BOTH `self.voiceover(text=...)` and the
-  caption `Text(...)`, so audio and on-screen text always match.
+- Pass the scene's narration to BOTH `self.voiceover(text=...)` and
+  `make_caption(...)`, so audio and on-screen text always match.
+- ALWAYS build captions via `make_caption(...)` so they are scaled to fit the
+  frame width and never overflow the screen edges.
 - Use `run_time=tracker.duration` (or split the duration across several
   `self.play` calls) so visuals fill the spoken line.
-- Keep captions readable: `font_size=24`, `.to_edge(DOWN)`, and `self.remove`
-  the caption after each block so they do not stack.
-- A scene may contain multiple `self.voiceover` blocks if its narration has
-  multiple sentences; show one caption per block.
+- Keep captions readable: `.to_edge(DOWN)` and `self.remove` the caption after
+  each block so they do not stack.
+- Prefer ONE caption per spoken sentence: a scene may contain multiple
+  `self.voiceover` blocks, each with its own short narration and caption. This
+  keeps every caption short enough to stay legible after width-fitting.
 
 ## Avoid LaTeX Unless The Plan Demands Math
 - Prefer `Text("...")` over `Tex` / `MathTex`.
