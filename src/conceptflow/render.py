@@ -18,6 +18,7 @@ import asyncio
 import re
 import shutil
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -55,14 +56,33 @@ MANIM_IMAGE: modal.Image = (
         "texlive-latex-base",
         "texlive-fonts-recommended",
         "texlive-latex-extra",
+        # pyttsx3 offline-fallback voice (espeak) + libespeak runtime, and
+        # sox, a transitive manim-voiceover dependency.
+        "espeak",
+        "libespeak1",
+        "sox",
     )
-    .uv_pip_install("manim==0.20.1")
+    .uv_pip_install(
+        "manim==0.20.1",
+        "manim-voiceover[gtts,pyttsx3]==0.4.0",
+    )
 )
 
 # Hard wall-clock cap on a single render or stitch invocation.
 _RENDER_TIMEOUT_SECONDS: int = 60 * 5
 
 _SCENE_CLASS_RE: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+@lru_cache(maxsize=1)
+def _read_sandbox_tts_source() -> str:
+    """Read the sandbox-side TTS helper module source for upload.
+
+    Returns:
+        The text of ``sandbox_tts.py`` from this package, to be written into
+        the render sandbox at ``/work/sandbox_tts.py``.
+    """
+    return (Path(__file__).resolve().parent / "sandbox_tts.py").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -473,13 +493,18 @@ def _run_render_blocking(
 
     try:
         sandbox = ModalSandbox(sandbox=modal_sb)
-        sandbox.upload_files([("/work/scene.py", source.encode("utf-8"))])
+        sandbox.upload_files(
+            [
+                ("/work/sandbox_tts.py", _read_sandbox_tts_source().encode("utf-8")),
+                ("/work/scene.py", source.encode("utf-8")),
+            ]
+        )
 
         # langchain-modal's ExecuteResponse exposes a single combined `output`
         # stream plus `exit_code`; we surface that output under `stderr` so the
         # manim-coder subagent's prompt (which reads `stderr`) keeps working.
         exec_result = sandbox.execute(
-            f"cd /work && manim -ql scene.py {scene_class}",
+            f"cd /work && TTS_SERVICE={settings.tts_service} manim -ql scene.py {scene_class}",
             timeout=_RENDER_TIMEOUT_SECONDS,
         )
         if exec_result.exit_code != 0:

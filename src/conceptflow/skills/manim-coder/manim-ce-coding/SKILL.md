@@ -6,14 +6,23 @@ description: Manim Community Edition coding rules, LaTeX-avoidance, multi-scene 
 # Manim CE Coding
 
 ## Hard Rules For /scene.py
-- First line MUST be: `from manim import *`
+- The first three lines MUST be, in this order:
+  - `from manim import *`
+  - `from manim_voiceover import VoiceoverScene`
+  - `from sandbox_tts import build_speech_service`
 - Manim Community Edition syntax, NOT ManimGL.
-- One Scene subclass per planned scene; class names MUST match the
-  `## Scene N: <ClassName>` headers in `/script.md`, in the same order.
-- Every Scene MUST contain at least one `self.play(...)` and one
-  `self.wait(...)` so something renders.
+- One scene class per planned scene; each subclasses `VoiceoverScene` (NOT
+  `Scene`). Class names MUST match the `## Scene N: <ClassName>` headers in
+  `/script.md`, in the same order.
+- The FIRST statement in every `construct` MUST be:
+  `self.set_speech_service(build_speech_service())`
+- Every narration beat MUST be spoken inside a `self.voiceover(...)` block,
+  with animations timed to the narration (see "Voiceover + Captions").
 - Target 10–20 seconds of animation per scene.
 - Do NOT add an `if __name__ == "__main__"` block.
+- Do NOT define `build_speech_service` yourself; it is provided by the
+  uploaded `sandbox_tts` module. Do NOT import or configure any TTS service
+  class directly.
 
 ## Multi-Scene Layout
 - All Scene subclasses live in one `/scene.py` file.
@@ -24,6 +33,41 @@ description: Manim Community Edition coding rules, LaTeX-avoidance, multi-scene 
   do not touch classes that have already rendered successfully.
 - After all scenes render, call `stitch_videos` with the ordered list of
   paths to produce the final `/video.mp4`.
+
+## Voiceover + Captions
+
+Each scene speaks its `- Narration:` line from `/script.md` and shows it as a
+burned-in caption. Wrap every beat like this so the animation runs for as
+long as the narration takes:
+
+```python
+from manim import *
+from manim_voiceover import VoiceoverScene
+from sandbox_tts import build_speech_service
+
+
+class Scene1(VoiceoverScene):
+    def construct(self):
+        self.set_speech_service(build_speech_service())
+
+        narration = "Here is the idea, one sentence at a time."
+        caption = Text(narration, font_size=24).to_edge(DOWN)
+        with self.voiceover(text=narration) as tracker:
+            self.add(caption)
+            circle = Circle()
+            self.play(Create(circle), run_time=tracker.duration)
+        self.remove(caption)
+```
+
+Rules:
+- Pass the scene's narration to BOTH `self.voiceover(text=...)` and the
+  caption `Text(...)`, so audio and on-screen text always match.
+- Use `run_time=tracker.duration` (or split the duration across several
+  `self.play` calls) so visuals fill the spoken line.
+- Keep captions readable: `font_size=24`, `.to_edge(DOWN)`, and `self.remove`
+  the caption after each block so they do not stack.
+- A scene may contain multiple `self.voiceover` blocks if its narration has
+  multiple sentences; show one caption per block.
 
 ## Avoid LaTeX Unless The Plan Demands Math
 - Prefer `Text("...")` over `Tex` / `MathTex`.

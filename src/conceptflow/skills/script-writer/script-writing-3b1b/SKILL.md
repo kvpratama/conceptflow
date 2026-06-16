@@ -33,6 +33,14 @@ Target ~60–80 words per scene:
 - Use `Text`, `Square`, `Circle`, `Arrow`, `Line`, `Dot`, `NumberPlane`, `Axes`.
 - Use `MathTex` / `Tex` ONLY when a formula is essential to the idea.
 
+## Narration Must Be Split Per Scene
+
+Each scene is rendered independently and gets its own spoken voiceover, so
+every scene MUST carry its own narration line. The full `# Narration` block
+is the verbatim concatenation, in order, of every scene's `- Narration:`
+line. Keep each scene's narration to 1–3 sentences that can be comfortably
+spoken within that scene's ~10–20 second duration.
+
 ## Required Output: Write /script.md With EXACTLY This Structure
 
 ```markdown
@@ -48,6 +56,7 @@ Target ~60–80 words per scene:
 
 ## Scene 1: <PascalCase class name>
 - Duration: ~10–20 seconds
+- Narration: <1–3 sentences spoken during this scene>
 - Visual beats:
   1. <beat>
   2. <beat>
@@ -55,6 +64,7 @@ Target ~60–80 words per scene:
 
 ## Scene 2: <PascalCase class name>   ← repeat block for each scene
 - Duration: ~10–20 seconds
+- Narration: <1–3 sentences spoken during this scene>
 - Visual beats:
   1. <beat>
   2. <beat>

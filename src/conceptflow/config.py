@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
@@ -76,6 +77,10 @@ class Settings(BaseSettings):
         max_render_attempts: Maximum number of ``render_manim`` attempts
             allowed per run. Enforced in code by the render tool, not merely
             advised in the manim-coder prompt.
+        tts_service: Narration backend used inside the render sandbox.
+            ``"gtts"`` (default) uses Google Translate TTS (free, no key,
+            needs internet) and falls back to ``"pyttsx3"`` (offline espeak)
+            when gTTS is unreachable. ``"pyttsx3"`` forces the offline engine.
         retry_max_retries: Maximum number of retries for ModelRetryMiddleware.
         retry_backoff_factor: Exponential backoff factor for ModelRetryMiddleware.
         retry_initial_delay: Initial delay (seconds) for ModelRetryMiddleware.
@@ -95,6 +100,7 @@ class Settings(BaseSettings):
     modal_app_name: str = "conceptflow"
     modal_sandbox_timeout: int = 60 * 30
     max_render_attempts: int = Field(default=3, gt=0)
+    tts_service: Literal["gtts", "pyttsx3"] = "gtts"
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0

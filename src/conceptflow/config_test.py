@@ -212,3 +212,24 @@ def test_load_environment_tolerates_missing_user_config(
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "no-home"))
 
     load_environment()  # must not raise
+
+
+def test_default_tts_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tts_service defaults to gtts."""
+    monkeypatch.delenv("TTS_SERVICE", raising=False)
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.tts_service == "gtts"
+
+
+def test_tts_service_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tts_service can be set to pyttsx3 via the TTS_SERVICE env var."""
+    monkeypatch.setenv("TTS_SERVICE", "pyttsx3")
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.tts_service == "pyttsx3"
+
+
+def test_tts_service_rejects_unknown_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unrecognised TTS_SERVICE value is rejected."""
+    monkeypatch.setenv("TTS_SERVICE", "elevenlabs")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore
