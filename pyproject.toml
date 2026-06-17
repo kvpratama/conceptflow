@@ -47,4 +47,8 @@ select = ["E", "F", "I", "UP", "B", "C4", "PT"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]
+markers = [
+    "integration: tests requiring a live sandbox or sandbox-only packages (skipped by default)",
+]
+addopts = "-m 'not integration'"
 

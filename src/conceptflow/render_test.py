@@ -646,3 +646,57 @@ async def test_stitch_videos_rejects_path_traversal(
         assert result["ok"] is False, f"Path '{bad_path}' should have been rejected."
         assert result["kind"] == "logic"
         assert "Invalid path" in result["message"]
+
+
+async def test_render_uploads_sandbox_tts_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sandbox-side TTS helper is uploaded alongside scene.py."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-tts")
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+    fake_sandbox = _make_fake_sandbox()
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {
+        "files": {"/scene.py": {"content": "x", "encoding": "utf-8"}},
+        "messages": [],
+    }
+    config: RunnableConfig = {"configurable": {"thread_id": "t-tts"}}
+    await render.render_manim.ainvoke({"scene_class": "Foo", "state": state}, config=config)
+
+    uploaded = fake_sandbox.upload_files.call_args[0][0]
+    uploaded_paths = [entry[0] for entry in uploaded]
+    assert "/work/sandbox_tts.py" in uploaded_paths
+    assert "/work/scene.py" in uploaded_paths
+
+
+async def test_render_command_passes_tts_service_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The configured tts_service is exported into the manim render command."""
+    from conceptflow import paths, render
+
+    monkeypatch.setenv("TTS_SERVICE", "pyttsx3")
+    render.get_settings.cache_clear()
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-env")
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+    fake_sandbox = _make_fake_sandbox()
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {
+        "files": {"/scene.py": {"content": "x", "encoding": "utf-8"}},
+        "messages": [],
+    }
+    config: RunnableConfig = {"configurable": {"thread_id": "t-env"}}
+    await render.render_manim.ainvoke({"scene_class": "Foo", "state": state}, config=config)
+
+    render.get_settings.cache_clear()
+    commands = [call.args[0] for call in fake_sandbox.execute.call_args_list]
+    assert any("TTS_SERVICE=pyttsx3 manim -ql scene.py Foo" in cmd for cmd in commands)
