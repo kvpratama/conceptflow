@@ -15,13 +15,28 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
+import subprocess
+import sys
 from collections.abc import Callable
-from pathlib import Path
 
 _logger = logging.getLogger(__name__)
 
 VALID_BACKENDS = ("gtts", "pyttsx3")
+
+# Hard wall-clock cap on the gTTS reachability probe. Kept well under the outer
+# manim render timeout so a hung/unreachable gTTS endpoint falls back to
+# pyttsx3 quickly instead of stalling the whole render.
+_PROBE_TIMEOUT_SECONDS: float = 15.0
+
+# Self-contained synthesis run in a short-lived subprocess so it can be killed
+# on timeout (gTTS/requests offer no usable per-call cancellation in-process).
+_PROBE_SCRIPT = (
+    "import tempfile\n"
+    "from pathlib import Path\n"
+    "from gtts import gTTS\n"
+    "with tempfile.TemporaryDirectory() as tmp:\n"
+    "    gTTS(text='ok', lang='en').save(str(Path(tmp) / 'probe.mp3'))\n"
+)
 
 
 def resolve_tts_backend(requested: str, probe: Callable[[], None]) -> str:
@@ -52,17 +67,32 @@ def resolve_tts_backend(requested: str, probe: Callable[[], None]) -> str:
     return "gtts"
 
 
-def _gtts_probe() -> None:
-    """Synthesize a tiny phrase with gTTS to verify reachability.
+def _gtts_probe(timeout: float = _PROBE_TIMEOUT_SECONDS) -> None:
+    """Synthesize a tiny phrase with gTTS in a subprocess to verify reachability.
+
+    The synthesis runs in a short-lived subprocess bounded by a hard wall-clock
+    timeout, so a hung or unreachable gTTS endpoint cannot block the render
+    indefinitely. On timeout the subprocess is killed and ``TimeoutError`` is
+    raised; any other failure (missing dependency, network error, non-zero
+    exit) propagates as ``subprocess.CalledProcessError``. Either way the caller
+    falls back to pyttsx3.
+
+    Args:
+        timeout: Maximum seconds to wait for the probe subprocess.
 
     Raises:
-        Exception: Propagates any gTTS/network error so the caller can fall
-            back to pyttsx3.
+        TimeoutError: If the probe does not complete within ``timeout`` seconds.
+        subprocess.CalledProcessError: If the probe subprocess exits non-zero.
     """
-    from gtts import gTTS  # ty:ignore[unresolved-import]
-
-    with tempfile.TemporaryDirectory() as tmp:
-        gTTS(text="ok", lang="en").save(str(Path(tmp) / "probe.mp3"))
+    try:
+        subprocess.run(
+            [sys.executable, "-c", _PROBE_SCRIPT],
+            check=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"gTTS probe exceeded {timeout:g}s timeout") from exc
 
 
 def build_speech_service(requested: str | None = None) -> object:
