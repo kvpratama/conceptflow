@@ -173,6 +173,40 @@ async def test_render_success_writes_mp4_and_returns_path(
     fake_modal_sb.terminate.assert_called_once()
 
 
+async def test_render_reuses_sandbox_when_id_in_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When state carries render_sandbox_id, render reconnects and does not own it."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-reuse")
+
+    fake_modal_sb = MagicMock()
+    create = MagicMock(return_value=fake_modal_sb)
+    from_id = MagicMock(return_value=fake_modal_sb)
+    monkeypatch.setattr(render.modal.Sandbox, "create", create)
+    monkeypatch.setattr(render.modal.Sandbox, "from_id", from_id)
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=_make_fake_sandbox()))
+
+    state = {
+        "files": {"/scene.py": {"content": "x", "encoding": "utf-8"}},
+        "messages": [],
+        "render_sandbox_id": "sb-123",
+    }
+    config: RunnableConfig = {"configurable": {"thread_id": "t-reuse"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is True
+    from_id.assert_called_once_with("sb-123")
+    create.assert_not_called()
+    fake_modal_sb.terminate.assert_not_called()
+
+
 async def test_render_selects_final_mp4_not_partial_movie_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -435,7 +469,9 @@ async def test_stitch_videos_empty_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     from conceptflow.render import stitch_videos
 
     config: RunnableConfig = {"configurable": {"thread_id": "t"}}
-    result = await stitch_videos.ainvoke({"mp4_paths": []}, config=config)
+    result = await stitch_videos.ainvoke(
+        {"mp4_paths": [], "state": {"messages": []}}, config=config
+    )
 
     assert result["ok"] is False
     assert result["kind"] == "logic"
@@ -450,7 +486,9 @@ async def test_stitch_videos_missing_file(tmp_path: Path, monkeypatch: pytest.Mo
     config: RunnableConfig = {"configurable": {"thread_id": "t"}}
 
     # The file does not exist on disk
-    result = await stitch_videos.ainvoke({"mp4_paths": ["/video_Foo.mp4"]}, config=config)
+    result = await stitch_videos.ainvoke(
+        {"mp4_paths": ["/video_Foo.mp4"], "state": {"messages": []}}, config=config
+    )
 
     assert result["ok"] is False
     assert result["kind"] == "logic"
@@ -472,7 +510,9 @@ async def test_stitch_videos_single_scene_shortcut(
     (t_dir / "video_Foo.mp4").write_bytes(b"SINGLE_SCENE")
 
     # Call stitch with 1 scene -> should copy file directly
-    result = await stitch_videos.ainvoke({"mp4_paths": ["/video_Foo.mp4"]}, config=config)
+    result = await stitch_videos.ainvoke(
+        {"mp4_paths": ["/video_Foo.mp4"], "state": {"messages": []}}, config=config
+    )
 
     assert result == {"ok": True, "mp4_path": "/video.mp4"}
     # Verify the file was copied
@@ -506,7 +546,8 @@ async def test_stitch_videos_multiple_scenes_success(
     monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
 
     result = await render.stitch_videos.ainvoke(
-        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"]}, config=config
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": {"messages": []}},
+        config=config,
     )
 
     assert result == {"ok": True, "mp4_path": "/video.mp4"}
@@ -519,6 +560,47 @@ async def test_stitch_videos_multiple_scenes_success(
     assert uploaded[0][0] == "/work/concat_list.txt"
     assert b"file '/work/video_Foo.mp4'" in uploaded[0][1]
     assert b"file '/work/video_Bar.mp4'" in uploaded[0][1]
+
+
+async def test_stitch_reuses_sandbox_when_id_in_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multi-scene stitch reconnects to the shared sandbox and does not own it."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    config: RunnableConfig = {"configurable": {"thread_id": "t"}}
+
+    t_dir = tmp_path / "outputs" / "t"
+    t_dir.mkdir(parents=True, exist_ok=True)
+    (t_dir / "video_Foo.mp4").write_bytes(b"S1")
+    (t_dir / "video_Bar.mp4").write_bytes(b"S2")
+
+    fake_modal_sb = MagicMock()
+    create = MagicMock(return_value=fake_modal_sb)
+    from_id = MagicMock(return_value=fake_modal_sb)
+    monkeypatch.setattr(render.modal.Sandbox, "create", create)
+    monkeypatch.setattr(render.modal.Sandbox, "from_id", from_id)
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    fake_sandbox = MagicMock()
+    fake_sandbox.upload_files.return_value = []
+    fake_sandbox.execute.return_value = _make_exec_response(exit_code=0, output="ok")
+    fake_sandbox.download_files.return_value = [
+        _make_download_response(path="/work/output.mp4", content=b"OUT")
+    ]
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {"messages": [], "render_sandbox_id": "sb-xyz"}
+    result = await render.stitch_videos.ainvoke(
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": state},
+        config=config,
+    )
+
+    assert result == {"ok": True, "mp4_path": "/video.mp4"}
+    from_id.assert_called_once_with("sb-xyz")
+    create.assert_not_called()
+    fake_modal_sb.terminate.assert_not_called()
 
 
 async def test_stitch_videos_ffmpeg_failure(
@@ -544,7 +626,8 @@ async def test_stitch_videos_ffmpeg_failure(
     monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
 
     result = await render.stitch_videos.ainvoke(
-        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"]}, config=config
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": {"messages": []}},
+        config=config,
     )
 
     assert result["ok"] is False
@@ -580,7 +663,8 @@ async def test_stitch_videos_download_failure(
     monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
 
     result = await render.stitch_videos.ainvoke(
-        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"]}, config=config
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": {"messages": []}},
+        config=config,
     )
 
     assert result["ok"] is False
@@ -608,7 +692,8 @@ async def test_stitch_videos_sandbox_creation_fails(
     monkeypatch.setattr(render.modal.App, "lookup", _explode)
 
     result = await render.stitch_videos.ainvoke(
-        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"]}, config=config
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": {"messages": []}},
+        config=config,
     )
 
     assert result["ok"] is False
@@ -642,7 +727,9 @@ async def test_stitch_videos_rejects_path_traversal(
     ]
 
     for bad_path in test_cases:
-        result = await stitch_videos.ainvoke({"mp4_paths": [bad_path]}, config=config)
+        result = await stitch_videos.ainvoke(
+            {"mp4_paths": [bad_path], "state": {"messages": []}}, config=config
+        )
         assert result["ok"] is False, f"Path '{bad_path}' should have been rejected."
         assert result["kind"] == "logic"
         assert "Invalid path" in result["message"]
