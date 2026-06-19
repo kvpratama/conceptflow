@@ -207,6 +207,44 @@ async def test_render_reuses_sandbox_when_id_in_state(
     fake_modal_sb.terminate.assert_not_called()
 
 
+async def test_render_isolates_work_dir_per_scene_class(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each render uses a per-scene_class workdir (/work/<SceneClass>/) so two
+    concurrent renders of different scenes never share scene.py or media/."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-iso")
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    fake_sandbox = _make_fake_sandbox()
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {
+        "files": {"/scene.py": {"content": "from manim import *\n", "encoding": "utf-8"}},
+        "messages": [],
+    }
+    config: RunnableConfig = {"configurable": {"thread_id": "t-iso"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is True
+
+    # Uploads are namespaced under /work/Foo/.
+    uploaded_paths = [item[0] for item in fake_sandbox.upload_files.call_args.args[0]]
+    assert "/work/Foo/scene.py" in uploaded_paths
+    assert "/work/Foo/sandbox_tts.py" in uploaded_paths
+
+    # The manim render and the find both target the per-scene dir.
+    commands = [call.args[0] for call in fake_sandbox.execute.call_args_list]
+    assert any("cd /work/Foo &&" in cmd and "manim -ql scene.py Foo" in cmd for cmd in commands)
+    assert any(cmd.startswith("find /work/Foo/media ") for cmd in commands)
+
+
 async def test_render_selects_final_mp4_not_partial_movie_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -757,8 +795,8 @@ async def test_render_uploads_sandbox_tts_helper(
 
     uploaded = fake_sandbox.upload_files.call_args[0][0]
     uploaded_paths = [entry[0] for entry in uploaded]
-    assert "/work/sandbox_tts.py" in uploaded_paths
-    assert "/work/scene.py" in uploaded_paths
+    assert "/work/Foo/sandbox_tts.py" in uploaded_paths
+    assert "/work/Foo/scene.py" in uploaded_paths
 
 
 async def test_render_command_passes_tts_service_env(

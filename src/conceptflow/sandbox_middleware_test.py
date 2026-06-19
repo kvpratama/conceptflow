@@ -59,3 +59,44 @@ async def test_aafter_agent_noop_when_no_sandbox(monkeypatch: pytest.MonkeyPatch
 
     terminate.assert_not_called()
     assert update is None
+
+
+async def test_awrap_model_call_terminates_sandbox_on_model_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """awrap_model_call cleans up the sandbox and re-raises model failures."""
+    from conceptflow import sandbox_middleware
+
+    terminate = MagicMock()
+    monkeypatch.setattr(sandbox_middleware, "terminate_sandbox", terminate)
+
+    mw = sandbox_middleware.ManimSandboxMiddleware()
+    request = cast(Any, MagicMock(state={"messages": [], "render_sandbox_id": "sb-1"}))
+
+    async def failing_handler(_request: Any) -> Any:
+        raise RuntimeError("model failed")
+
+    with pytest.raises(RuntimeError, match="model failed"):
+        await mw.awrap_model_call(request, failing_handler)
+
+    terminate.assert_called_once_with("sb-1")
+
+
+async def test_awrap_model_call_does_not_terminate_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """awrap_model_call leaves normal cleanup to aafter_agent on success."""
+    from conceptflow import sandbox_middleware
+
+    terminate = MagicMock()
+    monkeypatch.setattr(sandbox_middleware, "terminate_sandbox", terminate)
+
+    mw = sandbox_middleware.ManimSandboxMiddleware()
+    request = cast(Any, MagicMock(state={"messages": [], "render_sandbox_id": "sb-1"}))
+    response = MagicMock()
+
+    async def successful_handler(_request: Any) -> Any:
+        return response
+
+    assert await mw.awrap_model_call(request, successful_handler) is response
+    terminate.assert_not_called()

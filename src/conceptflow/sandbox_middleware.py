@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, NotRequired
+from collections.abc import Awaitable, Callable
+from typing import Any, NotRequired, cast
 
-from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    AgentState,
+    ModelRequest,
+    ModelResponse,
+)
 from langgraph.runtime import Runtime
 
 from conceptflow.config import get_settings
@@ -57,5 +63,42 @@ class ManimSandboxMiddleware(AgentMiddleware[ManimSandboxState]):
         sandbox_id = state.get("render_sandbox_id")
         if not sandbox_id:
             return None
-        await asyncio.to_thread(terminate_sandbox, sandbox_id)
+        await self._aterminate_state_sandbox(state)
         return {"render_sandbox_id": None}
+
+    async def _aterminate_state_sandbox(self, state: ManimSandboxState) -> None:
+        """Best-effort terminate the sandbox recorded in agent state.
+
+        Args:
+            state: Agent state that may contain ``render_sandbox_id``.
+        """
+        sandbox_id = state.get("render_sandbox_id")
+        if sandbox_id:
+            await asyncio.to_thread(terminate_sandbox, sandbox_id)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
+    ) -> ModelResponse[Any]:
+        """Terminate the render sandbox if an unhandled model error aborts the agent.
+
+        LangChain wires ``aafter_agent`` as a normal exit node rather than a
+        ``finally`` hook, so an unhandled model-call exception aborts the
+        subagent graph and skips ``aafter_agent``, leaking the sandbox until its
+        Modal timeout. This performs best-effort cleanup on that failure path and
+        re-raises the original exception so the failure is not masked.
+
+        Args:
+            request: Model call request whose ``state`` carries
+                ``render_sandbox_id``.
+            handler: Async callable that executes the underlying model call.
+
+        Returns:
+            The model response produced by ``handler`` on the success path.
+        """
+        try:
+            return await handler(request)
+        except Exception:
+            await self._aterminate_state_sandbox(cast(ManimSandboxState, request.state))
+            raise

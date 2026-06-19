@@ -192,6 +192,11 @@ async def stitch_videos(
     Args:
         mp4_paths: Ordered list of mp4_path values returned by render_manim,
             e.g. ``["/video_Scene1.mp4", "/video_Scene2.mp4"]``.
+        state: Injected LangGraph state containing ``render_sandbox_id``, the
+            object id of the shared render sandbox to reuse (or ``None`` to
+            create an ephemeral one for this stitch).
+        config: Runnable configuration used to resolve the output directory
+            via :func:`out_dir_from_config`.
 
     Returns:
         A dict in one of these shapes:
@@ -355,7 +360,7 @@ def _stitch_blocking(
         if owned:
             try:
                 modal_sb.terminate()
-            except Exception:  # noqa: BLE001 — teardown failure is non-fatal
+            except modal.exception.Error:  # teardown failure is non-fatal
                 pass
 
 
@@ -427,7 +432,7 @@ def terminate_sandbox(sandbox_id: str) -> None:
     """
     try:
         modal.Sandbox.from_id(sandbox_id).terminate()
-    except Exception:  # noqa: BLE001 — teardown failure is non-fatal
+    except modal.exception.Error:  # teardown failure is non-fatal
         pass
 
 
@@ -538,11 +543,17 @@ def _run_render_blocking(
         }
 
     try:
+        # Each render gets its own workdir keyed by scene_class so that
+        # concurrent renders of different scenes in the shared sandbox never
+        # share scene.py or the media/ output tree. scene_class is validated
+        # as a Python identifier in render_manim, so it is a safe path segment.
+        work_dir = f"/work/{scene_class}"
+
         sandbox = ModalSandbox(sandbox=modal_sb)
         sandbox.upload_files(
             [
-                ("/work/sandbox_tts.py", _read_sandbox_tts_source().encode("utf-8")),
-                ("/work/scene.py", source.encode("utf-8")),
+                (f"{work_dir}/sandbox_tts.py", _read_sandbox_tts_source().encode("utf-8")),
+                (f"{work_dir}/scene.py", source.encode("utf-8")),
             ]
         )
 
@@ -550,7 +561,7 @@ def _run_render_blocking(
         # stream plus `exit_code`; we surface that output under `stderr` so the
         # manim-coder subagent's prompt (which reads `stderr`) keeps working.
         exec_result = sandbox.execute(
-            f"cd /work && TTS_SERVICE={settings.tts_service} manim -ql scene.py {scene_class}",
+            f"cd {work_dir} && TTS_SERVICE={settings.tts_service} manim -ql scene.py {scene_class}",
             timeout=_RENDER_TIMEOUT_SECONDS,
         )
         if exec_result.exit_code != 0:
@@ -562,9 +573,9 @@ def _run_render_blocking(
             }
 
         # Locate the final MP4. Manim writes it to
-        # /work/media/videos/scene/<quality>/<SceneClass>.mp4 and also leaves
-        # intermediate clips under .../partial_movie_files/<SceneClass>/*.mp4.
-        find = sandbox.execute("find /work/media -name '*.mp4' -type f")
+        # {work_dir}/media/videos/scene/<quality>/<SceneClass>.mp4 and also
+        # leaves intermediate clips under .../partial_movie_files/<SceneClass>/.
+        find = sandbox.execute(f"find {work_dir}/media -name '*.mp4' -type f")
         candidates = [line.strip() for line in find.output.splitlines() if line.strip()]
         remote_mp4 = _select_final_mp4(candidates, scene_class)
         if remote_mp4 is None:
@@ -602,5 +613,5 @@ def _run_render_blocking(
         if owned:
             try:
                 modal_sb.terminate()
-            except Exception:  # noqa: BLE001 — teardown failure is non-fatal
+            except modal.exception.Error:  # teardown failure is non-fatal
                 pass
