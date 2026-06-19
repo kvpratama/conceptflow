@@ -104,6 +104,14 @@ def _make_download_response(
     return resp
 
 
+def _make_upload_response(*, path: str, error: str | None = None) -> MagicMock:
+    """Mock of langchain_modal.sandbox.FileUploadResponse (dataclass)."""
+    resp = MagicMock(spec=["path", "error"])
+    resp.path = path
+    resp.error = error
+    return resp
+
+
 def _make_fake_sandbox(
     *,
     exit_code: int = 0,
@@ -120,6 +128,8 @@ def _make_fake_sandbox(
     combined_output = stdout + stderr
 
     def _execute(command: str, *, timeout: int | None = None):
+        if command.startswith("mkdir "):
+            return _make_exec_response(exit_code=0, output="")
         if command.startswith("find "):
             return _make_exec_response(exit_code=0, output=find_stdout)
         # The manim render call.
@@ -243,6 +253,86 @@ async def test_render_isolates_work_dir_per_scene_class(
     commands = [call.args[0] for call in fake_sandbox.execute.call_args_list]
     assert any("cd /work/Foo &&" in cmd and "manim -ql scene.py Foo" in cmd for cmd in commands)
     assert any(cmd.startswith("find /work/Foo/media ") for cmd in commands)
+
+
+async def test_render_creates_remote_work_dir_before_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-scene sandbox directory must exist before uploading files into it."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-mkdir")
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    fake_sandbox = _make_fake_sandbox()
+    events: list[str] = []
+
+    def _execute(command: str, *, timeout: int | None = None) -> MagicMock:
+        if command.startswith("mkdir "):
+            events.append("mkdir")
+            return _make_exec_response(exit_code=0, output="")
+        if command.startswith("find "):
+            return _make_exec_response(
+                exit_code=0,
+                output="/work/Foo/media/videos/scene/480p15/Foo.mp4\n",
+            )
+        return _make_exec_response(exit_code=0, output="")
+
+    def _upload_files(files: list[tuple[str, bytes]]) -> list[MagicMock]:
+        events.append("upload")
+        return [_make_upload_response(path=path) for path, _ in files]
+
+    fake_sandbox.execute.side_effect = _execute
+    fake_sandbox.upload_files.side_effect = _upload_files
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {"files": {}, "messages": []}
+    config: RunnableConfig = {"configurable": {"thread_id": "t-mkdir"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is True
+    assert events[:2] == ["mkdir", "upload"]
+    assert fake_sandbox.execute.call_args_list[0].args[0] == "mkdir -p /work/Foo"
+
+
+async def test_render_returns_infra_when_upload_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Upload errors should stop before the render command hides the real cause."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-upload-fail")
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    fake_sandbox = _make_fake_sandbox()
+    fake_sandbox.upload_files.return_value = [
+        _make_upload_response(path="/work/Foo/sandbox_tts.py"),
+        _make_upload_response(path="/work/Foo/scene.py", error="file_not_found"),
+    ]
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {"files": {}, "messages": []}
+    config: RunnableConfig = {"configurable": {"thread_id": "t-upload-fail"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is False
+    assert result["kind"] == "infra"
+    assert "Failed to upload render files" in result["message"]
+    assert "/work/Foo/scene.py: file_not_found" in result["message"]
+    render_commands = [
+        call.args[0] for call in fake_sandbox.execute.call_args_list if "manim -ql" in call.args[0]
+    ]
+    assert render_commands == []
 
 
 async def test_render_selects_final_mp4_not_partial_movie_file(

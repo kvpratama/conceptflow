@@ -550,12 +550,33 @@ def _run_render_blocking(
         work_dir = f"/work/{scene_class}"
 
         sandbox = ModalSandbox(sandbox=modal_sb)
-        sandbox.upload_files(
+        mkdir_result = sandbox.execute(f"mkdir -p {work_dir}", timeout=_RENDER_TIMEOUT_SECONDS)
+        if mkdir_result.exit_code != 0:
+            return {
+                "ok": False,
+                "kind": "infra",
+                "message": (
+                    f"Failed to create render work directory {work_dir}:\n{mkdir_result.output}"
+                ),
+            }
+
+        uploads = sandbox.upload_files(
             [
                 (f"{work_dir}/sandbox_tts.py", _read_sandbox_tts_source().encode("utf-8")),
                 (f"{work_dir}/scene.py", source.encode("utf-8")),
             ]
         )
+        upload_errors = [
+            f"{response.path}: {response.error}"
+            for response in uploads
+            if response.error is not None
+        ]
+        if upload_errors:
+            return {
+                "ok": False,
+                "kind": "infra",
+                "message": "Failed to upload render files:\n" + "\n".join(upload_errors),
+            }
 
         # langchain-modal's ExecuteResponse exposes a single combined `output`
         # stream plus `exit_code`; we surface that output under `stderr` so the
