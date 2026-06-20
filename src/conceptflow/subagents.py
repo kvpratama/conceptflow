@@ -6,11 +6,15 @@ agent. The orchestrator addresses them by name via the `task` tool.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from deepagents import SubAgent
+from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from conceptflow import prompts
 from conceptflow.config import get_settings
 from conceptflow.render import render_manim, stitch_videos
+from conceptflow.sandbox_middleware import ManimSandboxMiddleware
 
 
 def build_subagents() -> list[SubAgent]:
@@ -44,6 +48,12 @@ def build_subagents() -> list[SubAgent]:
             ),
             system_prompt=prompts.MANIM_CODER_PROMPT,
             tools=[render_manim, stitch_videos],
+            middleware=[
+                cast(
+                    AgentMiddleware[AgentState[Any], None, Any],
+                    ManimSandboxMiddleware(),
+                )
+            ],
             skills=["/skills/manim-coder/"],
         ),
     ]

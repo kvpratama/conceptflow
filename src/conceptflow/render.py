@@ -30,7 +30,7 @@ from langchain_core.tools import tool
 from langchain_modal import ModalSandbox
 from langgraph.prebuilt import InjectedState
 
-from conceptflow.config import get_settings
+from conceptflow.config import Settings, get_settings
 from conceptflow.paths import out_dir_from_config
 
 # Pre-resolve and cache the system temp directory at import time, while no
@@ -169,6 +169,7 @@ async def render_manim(
         scene_class=scene_class,
         out_dir=out_dir,
         attempt=attempt,
+        sandbox_id=state.get("render_sandbox_id"),
     )
 
 
@@ -180,6 +181,7 @@ async def render_manim(
 @tool
 async def stitch_videos(
     mp4_paths: list[str],
+    state: Annotated[dict[str, Any], InjectedState],
     config: RunnableConfig,
 ) -> dict[str, Any]:
     """Concatenate per-scene MP4s into a single /video.mp4.
@@ -190,6 +192,11 @@ async def stitch_videos(
     Args:
         mp4_paths: Ordered list of mp4_path values returned by render_manim,
             e.g. ``["/video_Scene1.mp4", "/video_Scene2.mp4"]``.
+        state: Injected LangGraph state containing ``render_sandbox_id``, the
+            object id of the shared render sandbox to reuse (or ``None`` to
+            create an ephemeral one for this stitch).
+        config: Runnable configuration used to resolve the output directory
+            via :func:`out_dir_from_config`.
 
     Returns:
         A dict in one of these shapes:
@@ -265,10 +272,14 @@ async def stitch_videos(
         await asyncio.to_thread(shutil.copy2, str(local_paths[0]), str(out_path))
         return {"ok": True, "mp4_path": "/video.mp4"}
 
-    return await asyncio.to_thread(_stitch_blocking, local_paths, out_dir)
+    return await asyncio.to_thread(
+        _stitch_blocking, local_paths, out_dir, state.get("render_sandbox_id")
+    )
 
 
-def _stitch_blocking(local_paths: list[Path], out_dir: Path) -> dict[str, Any]:
+def _stitch_blocking(
+    local_paths: list[Path], out_dir: Path, sandbox_id: str | None
+) -> dict[str, Any]:
     """Upload per-scene MP4s to a Modal sandbox, run ffmpeg concat, download result.
 
     This function is fully synchronous and intended to be invoked from a
@@ -277,6 +288,8 @@ def _stitch_blocking(local_paths: list[Path], out_dir: Path) -> dict[str, Any]:
     Args:
         local_paths: List of absolute file paths to the local per-scene MP4 files.
         out_dir: The directory where the final stitched video should be saved.
+        sandbox_id: Object id of the shared render sandbox, or ``None`` to
+            create an ephemeral one for this stitch.
 
     Returns:
         A dictionary containing the result of the stitch operation. On success,
@@ -285,16 +298,7 @@ def _stitch_blocking(local_paths: list[Path], out_dir: Path) -> dict[str, Any]:
     """
     try:
         settings = get_settings()
-        hydrated_app = modal.App.lookup(settings.modal_app_name, create_if_missing=True)
-
-        modal_sb = modal.Sandbox.create(
-            "sleep",
-            "infinity",
-            app=hydrated_app,
-            image=MANIM_IMAGE,
-            timeout=settings.modal_sandbox_timeout,
-            workdir="/work",
-        )
+        modal_sb, owned = _resolve_sandbox(sandbox_id, settings)
     except modal.exception.Error as exc:
         return {
             "ok": False,
@@ -353,10 +357,11 @@ def _stitch_blocking(local_paths: list[Path], out_dir: Path) -> dict[str, Any]:
             "message": f"Modal sandbox error during stitch: {exc!s}",
         }
     finally:
-        try:
-            modal_sb.terminate()
-        except Exception:  # noqa: BLE001 — teardown failure is non-fatal
-            pass
+        if owned:
+            try:
+                modal_sb.terminate()
+            except modal.exception.Error:  # teardown failure is non-fatal
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +404,54 @@ def _count_prior_render_calls(state: dict[str, Any], scene_class: str) -> int:
     )
 
 
+def create_render_sandbox(settings: Settings) -> modal.Sandbox:
+    """Create a fresh Manim render sandbox running ``sleep infinity``.
+
+    Args:
+        settings: Application settings supplying the Modal app name and sandbox timeout.
+
+    Returns:
+        A running ``modal.Sandbox`` with workdir ``/work`` and the Manim image.
+    """
+    hydrated_app = modal.App.lookup(settings.modal_app_name, create_if_missing=True)
+    return modal.Sandbox.create(
+        "sleep",
+        "infinity",
+        app=hydrated_app,
+        image=MANIM_IMAGE,
+        timeout=settings.modal_sandbox_timeout,
+        workdir="/work",
+    )
+
+
+def terminate_sandbox(sandbox_id: str) -> None:
+    """Best-effort terminate a sandbox by id.
+
+    Args:
+        sandbox_id: Object id of the sandbox to terminate.
+    """
+    try:
+        modal.Sandbox.from_id(sandbox_id).terminate()
+    except modal.exception.Error:  # teardown failure is non-fatal
+        pass
+
+
+def _resolve_sandbox(sandbox_id: str | None, settings: Settings) -> tuple[modal.Sandbox, bool]:
+    """Reconnect to a pre-provisioned sandbox, or create an ephemeral one.
+
+    Args:
+        sandbox_id: Object id of a lifecycle-managed sandbox, or ``None``.
+        settings: Application settings used to create a fallback sandbox.
+
+    Returns:
+        ``(sandbox, owned)`` where ``owned`` means the caller created it and
+        must terminate it.
+    """
+    if sandbox_id:
+        return modal.Sandbox.from_id(sandbox_id), False
+    return create_render_sandbox(settings), True
+
+
 def _select_final_mp4(candidates: list[str], scene_class: str) -> str | None:
     """Pick the final rendered MP4, excluding Manim's partial_movie_files clips.
 
@@ -425,6 +478,7 @@ async def _run_render(
     scene_class: str,
     out_dir: Path,
     attempt: int,
+    sandbox_id: str | None,
 ) -> dict[str, Any]:
     """Offload the blocking Modal render to a worker thread.
 
@@ -433,6 +487,8 @@ async def _run_render(
         scene_class: The name of the scene class to render.
         out_dir: The directory where the rendered video should be saved.
         attempt: The current attempt number for this render.
+        sandbox_id: Object id of the shared render sandbox, or ``None`` to
+            create an ephemeral one.
 
     Returns:
         A dictionary containing the result of the render invocation.
@@ -443,6 +499,7 @@ async def _run_render(
         scene_class=scene_class,
         out_dir=out_dir,
         attempt=attempt,
+        sandbox_id=sandbox_id,
     )
 
 
@@ -452,6 +509,7 @@ def _run_render_blocking(
     scene_class: str,
     out_dir: Path,
     attempt: int,
+    sandbox_id: str | None,
 ) -> dict[str, Any]:
     """Spin up a sandbox, run manim, download the MP4, tear the sandbox down.
 
@@ -466,6 +524,8 @@ def _run_render_blocking(
         scene_class: The name of the scene class to render.
         out_dir: The directory where the rendered video should be saved.
         attempt: The current attempt number for this render.
+        sandbox_id: Object id of the shared render sandbox, or ``None`` to
+            create an ephemeral one.
 
     Returns:
         A dictionary containing the result of the render invocation. On success,
@@ -474,16 +534,7 @@ def _run_render_blocking(
     """
     try:
         settings = get_settings()
-        hydrated_app = modal.App.lookup(settings.modal_app_name, create_if_missing=True)
-
-        modal_sb = modal.Sandbox.create(
-            "sleep",
-            "infinity",
-            app=hydrated_app,
-            image=MANIM_IMAGE,
-            timeout=settings.modal_sandbox_timeout,
-            workdir="/work",
-        )
+        modal_sb, owned = _resolve_sandbox(sandbox_id, settings)
     except modal.exception.Error as exc:
         return {
             "ok": False,
@@ -492,19 +543,46 @@ def _run_render_blocking(
         }
 
     try:
+        # Each render gets its own workdir keyed by scene_class so that
+        # concurrent renders of different scenes in the shared sandbox never
+        # share scene.py or the media/ output tree. scene_class is validated
+        # as a Python identifier in render_manim, so it is a safe path segment.
+        work_dir = f"/work/{scene_class}"
+
         sandbox = ModalSandbox(sandbox=modal_sb)
-        sandbox.upload_files(
+        mkdir_result = sandbox.execute(f"mkdir -p {work_dir}", timeout=_RENDER_TIMEOUT_SECONDS)
+        if mkdir_result.exit_code != 0:
+            return {
+                "ok": False,
+                "kind": "infra",
+                "message": (
+                    f"Failed to create render work directory {work_dir}:\n{mkdir_result.output}"
+                ),
+            }
+
+        uploads = sandbox.upload_files(
             [
-                ("/work/sandbox_tts.py", _read_sandbox_tts_source().encode("utf-8")),
-                ("/work/scene.py", source.encode("utf-8")),
+                (f"{work_dir}/sandbox_tts.py", _read_sandbox_tts_source().encode("utf-8")),
+                (f"{work_dir}/scene.py", source.encode("utf-8")),
             ]
         )
+        upload_errors = [
+            f"{response.path}: {response.error}"
+            for response in uploads
+            if response.error is not None
+        ]
+        if upload_errors:
+            return {
+                "ok": False,
+                "kind": "infra",
+                "message": "Failed to upload render files:\n" + "\n".join(upload_errors),
+            }
 
         # langchain-modal's ExecuteResponse exposes a single combined `output`
         # stream plus `exit_code`; we surface that output under `stderr` so the
         # manim-coder subagent's prompt (which reads `stderr`) keeps working.
         exec_result = sandbox.execute(
-            f"cd /work && TTS_SERVICE={settings.tts_service} manim -ql scene.py {scene_class}",
+            f"cd {work_dir} && TTS_SERVICE={settings.tts_service} manim -ql scene.py {scene_class}",
             timeout=_RENDER_TIMEOUT_SECONDS,
         )
         if exec_result.exit_code != 0:
@@ -516,9 +594,9 @@ def _run_render_blocking(
             }
 
         # Locate the final MP4. Manim writes it to
-        # /work/media/videos/scene/<quality>/<SceneClass>.mp4 and also leaves
-        # intermediate clips under .../partial_movie_files/<SceneClass>/*.mp4.
-        find = sandbox.execute("find /work/media -name '*.mp4' -type f")
+        # {work_dir}/media/videos/scene/<quality>/<SceneClass>.mp4 and also
+        # leaves intermediate clips under .../partial_movie_files/<SceneClass>/.
+        find = sandbox.execute(f"find {work_dir}/media -name '*.mp4' -type f")
         candidates = [line.strip() for line in find.output.splitlines() if line.strip()]
         remote_mp4 = _select_final_mp4(candidates, scene_class)
         if remote_mp4 is None:
@@ -553,7 +631,8 @@ def _run_render_blocking(
             "message": f"Modal sandbox error during render: {exc!s}",
         }
     finally:
-        try:
-            modal_sb.terminate()
-        except Exception:  # noqa: BLE001 — teardown failure is non-fatal
-            pass
+        if owned:
+            try:
+                modal_sb.terminate()
+            except modal.exception.Error:  # teardown failure is non-fatal
+                pass

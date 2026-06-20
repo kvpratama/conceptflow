@@ -104,6 +104,14 @@ def _make_download_response(
     return resp
 
 
+def _make_upload_response(*, path: str, error: str | None = None) -> MagicMock:
+    """Mock of langchain_modal.sandbox.FileUploadResponse (dataclass)."""
+    resp = MagicMock(spec=["path", "error"])
+    resp.path = path
+    resp.error = error
+    return resp
+
+
 def _make_fake_sandbox(
     *,
     exit_code: int = 0,
@@ -120,6 +128,8 @@ def _make_fake_sandbox(
     combined_output = stdout + stderr
 
     def _execute(command: str, *, timeout: int | None = None):
+        if command.startswith("mkdir "):
+            return _make_exec_response(exit_code=0, output="")
         if command.startswith("find "):
             return _make_exec_response(exit_code=0, output=find_stdout)
         # The manim render call.
@@ -171,6 +181,158 @@ async def test_render_success_writes_mp4_and_returns_path(
 
     # Sandbox was torn down.
     fake_modal_sb.terminate.assert_called_once()
+
+
+async def test_render_reuses_sandbox_when_id_in_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When state carries render_sandbox_id, render reconnects and does not own it."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-reuse")
+
+    fake_modal_sb = MagicMock()
+    create = MagicMock(return_value=fake_modal_sb)
+    from_id = MagicMock(return_value=fake_modal_sb)
+    monkeypatch.setattr(render.modal.Sandbox, "create", create)
+    monkeypatch.setattr(render.modal.Sandbox, "from_id", from_id)
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=_make_fake_sandbox()))
+
+    state = {
+        "files": {"/scene.py": {"content": "x", "encoding": "utf-8"}},
+        "messages": [],
+        "render_sandbox_id": "sb-123",
+    }
+    config: RunnableConfig = {"configurable": {"thread_id": "t-reuse"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is True
+    from_id.assert_called_once_with("sb-123")
+    create.assert_not_called()
+    fake_modal_sb.terminate.assert_not_called()
+
+
+async def test_render_isolates_work_dir_per_scene_class(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each render uses a per-scene_class workdir (/work/<SceneClass>/) so two
+    concurrent renders of different scenes never share scene.py or media/."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-iso")
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    fake_sandbox = _make_fake_sandbox()
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {
+        "files": {"/scene.py": {"content": "from manim import *\n", "encoding": "utf-8"}},
+        "messages": [],
+    }
+    config: RunnableConfig = {"configurable": {"thread_id": "t-iso"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is True
+
+    # Uploads are namespaced under /work/Foo/.
+    uploaded_paths = [item[0] for item in fake_sandbox.upload_files.call_args.args[0]]
+    assert "/work/Foo/scene.py" in uploaded_paths
+    assert "/work/Foo/sandbox_tts.py" in uploaded_paths
+
+    # The manim render and the find both target the per-scene dir.
+    commands = [call.args[0] for call in fake_sandbox.execute.call_args_list]
+    assert any("cd /work/Foo &&" in cmd and "manim -ql scene.py Foo" in cmd for cmd in commands)
+    assert any(cmd.startswith("find /work/Foo/media ") for cmd in commands)
+
+
+async def test_render_creates_remote_work_dir_before_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-scene sandbox directory must exist before uploading files into it."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-mkdir")
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    fake_sandbox = _make_fake_sandbox()
+    events: list[str] = []
+
+    def _execute(command: str, *, timeout: int | None = None) -> MagicMock:
+        if command.startswith("mkdir "):
+            events.append("mkdir")
+            return _make_exec_response(exit_code=0, output="")
+        if command.startswith("find "):
+            return _make_exec_response(
+                exit_code=0,
+                output="/work/Foo/media/videos/scene/480p15/Foo.mp4\n",
+            )
+        return _make_exec_response(exit_code=0, output="")
+
+    def _upload_files(files: list[tuple[str, bytes]]) -> list[MagicMock]:
+        events.append("upload")
+        return [_make_upload_response(path=path) for path, _ in files]
+
+    fake_sandbox.execute.side_effect = _execute
+    fake_sandbox.upload_files.side_effect = _upload_files
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {"files": {}, "messages": []}
+    config: RunnableConfig = {"configurable": {"thread_id": "t-mkdir"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is True
+    assert events[:2] == ["mkdir", "upload"]
+    assert fake_sandbox.execute.call_args_list[0].args[0] == "mkdir -p /work/Foo"
+
+
+async def test_render_returns_infra_when_upload_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Upload errors should stop before the render command hides the real cause."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    _write_scene(tmp_path / "outputs", "t-upload-fail")
+    monkeypatch.setattr(render.modal.Sandbox, "create", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    fake_sandbox = _make_fake_sandbox()
+    fake_sandbox.upload_files.return_value = [
+        _make_upload_response(path="/work/Foo/sandbox_tts.py"),
+        _make_upload_response(path="/work/Foo/scene.py", error="file_not_found"),
+    ]
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {"files": {}, "messages": []}
+    config: RunnableConfig = {"configurable": {"thread_id": "t-upload-fail"}}
+
+    result = await render.render_manim.ainvoke(
+        {"scene_class": "Foo", "state": state}, config=config
+    )
+
+    assert result["ok"] is False
+    assert result["kind"] == "infra"
+    assert "Failed to upload render files" in result["message"]
+    assert "/work/Foo/scene.py: file_not_found" in result["message"]
+    render_commands = [
+        call.args[0] for call in fake_sandbox.execute.call_args_list if "manim -ql" in call.args[0]
+    ]
+    assert render_commands == []
 
 
 async def test_render_selects_final_mp4_not_partial_movie_file(
@@ -435,7 +597,9 @@ async def test_stitch_videos_empty_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     from conceptflow.render import stitch_videos
 
     config: RunnableConfig = {"configurable": {"thread_id": "t"}}
-    result = await stitch_videos.ainvoke({"mp4_paths": []}, config=config)
+    result = await stitch_videos.ainvoke(
+        {"mp4_paths": [], "state": {"messages": []}}, config=config
+    )
 
     assert result["ok"] is False
     assert result["kind"] == "logic"
@@ -450,7 +614,9 @@ async def test_stitch_videos_missing_file(tmp_path: Path, monkeypatch: pytest.Mo
     config: RunnableConfig = {"configurable": {"thread_id": "t"}}
 
     # The file does not exist on disk
-    result = await stitch_videos.ainvoke({"mp4_paths": ["/video_Foo.mp4"]}, config=config)
+    result = await stitch_videos.ainvoke(
+        {"mp4_paths": ["/video_Foo.mp4"], "state": {"messages": []}}, config=config
+    )
 
     assert result["ok"] is False
     assert result["kind"] == "logic"
@@ -472,7 +638,9 @@ async def test_stitch_videos_single_scene_shortcut(
     (t_dir / "video_Foo.mp4").write_bytes(b"SINGLE_SCENE")
 
     # Call stitch with 1 scene -> should copy file directly
-    result = await stitch_videos.ainvoke({"mp4_paths": ["/video_Foo.mp4"]}, config=config)
+    result = await stitch_videos.ainvoke(
+        {"mp4_paths": ["/video_Foo.mp4"], "state": {"messages": []}}, config=config
+    )
 
     assert result == {"ok": True, "mp4_path": "/video.mp4"}
     # Verify the file was copied
@@ -506,7 +674,8 @@ async def test_stitch_videos_multiple_scenes_success(
     monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
 
     result = await render.stitch_videos.ainvoke(
-        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"]}, config=config
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": {"messages": []}},
+        config=config,
     )
 
     assert result == {"ok": True, "mp4_path": "/video.mp4"}
@@ -519,6 +688,47 @@ async def test_stitch_videos_multiple_scenes_success(
     assert uploaded[0][0] == "/work/concat_list.txt"
     assert b"file '/work/video_Foo.mp4'" in uploaded[0][1]
     assert b"file '/work/video_Bar.mp4'" in uploaded[0][1]
+
+
+async def test_stitch_reuses_sandbox_when_id_in_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multi-scene stitch reconnects to the shared sandbox and does not own it."""
+    from conceptflow import paths, render
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+    config: RunnableConfig = {"configurable": {"thread_id": "t"}}
+
+    t_dir = tmp_path / "outputs" / "t"
+    t_dir.mkdir(parents=True, exist_ok=True)
+    (t_dir / "video_Foo.mp4").write_bytes(b"S1")
+    (t_dir / "video_Bar.mp4").write_bytes(b"S2")
+
+    fake_modal_sb = MagicMock()
+    create = MagicMock(return_value=fake_modal_sb)
+    from_id = MagicMock(return_value=fake_modal_sb)
+    monkeypatch.setattr(render.modal.Sandbox, "create", create)
+    monkeypatch.setattr(render.modal.Sandbox, "from_id", from_id)
+    monkeypatch.setattr(render.modal.App, "lookup", MagicMock(return_value=MagicMock()))
+
+    fake_sandbox = MagicMock()
+    fake_sandbox.upload_files.return_value = []
+    fake_sandbox.execute.return_value = _make_exec_response(exit_code=0, output="ok")
+    fake_sandbox.download_files.return_value = [
+        _make_download_response(path="/work/output.mp4", content=b"OUT")
+    ]
+    monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
+
+    state = {"messages": [], "render_sandbox_id": "sb-xyz"}
+    result = await render.stitch_videos.ainvoke(
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": state},
+        config=config,
+    )
+
+    assert result == {"ok": True, "mp4_path": "/video.mp4"}
+    from_id.assert_called_once_with("sb-xyz")
+    create.assert_not_called()
+    fake_modal_sb.terminate.assert_not_called()
 
 
 async def test_stitch_videos_ffmpeg_failure(
@@ -544,7 +754,8 @@ async def test_stitch_videos_ffmpeg_failure(
     monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
 
     result = await render.stitch_videos.ainvoke(
-        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"]}, config=config
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": {"messages": []}},
+        config=config,
     )
 
     assert result["ok"] is False
@@ -580,7 +791,8 @@ async def test_stitch_videos_download_failure(
     monkeypatch.setattr(render, "ModalSandbox", MagicMock(return_value=fake_sandbox))
 
     result = await render.stitch_videos.ainvoke(
-        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"]}, config=config
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": {"messages": []}},
+        config=config,
     )
 
     assert result["ok"] is False
@@ -608,7 +820,8 @@ async def test_stitch_videos_sandbox_creation_fails(
     monkeypatch.setattr(render.modal.App, "lookup", _explode)
 
     result = await render.stitch_videos.ainvoke(
-        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"]}, config=config
+        {"mp4_paths": ["/video_Foo.mp4", "/video_Bar.mp4"], "state": {"messages": []}},
+        config=config,
     )
 
     assert result["ok"] is False
@@ -642,7 +855,9 @@ async def test_stitch_videos_rejects_path_traversal(
     ]
 
     for bad_path in test_cases:
-        result = await stitch_videos.ainvoke({"mp4_paths": [bad_path]}, config=config)
+        result = await stitch_videos.ainvoke(
+            {"mp4_paths": [bad_path], "state": {"messages": []}}, config=config
+        )
         assert result["ok"] is False, f"Path '{bad_path}' should have been rejected."
         assert result["kind"] == "logic"
         assert "Invalid path" in result["message"]
@@ -670,8 +885,8 @@ async def test_render_uploads_sandbox_tts_helper(
 
     uploaded = fake_sandbox.upload_files.call_args[0][0]
     uploaded_paths = [entry[0] for entry in uploaded]
-    assert "/work/sandbox_tts.py" in uploaded_paths
-    assert "/work/scene.py" in uploaded_paths
+    assert "/work/Foo/sandbox_tts.py" in uploaded_paths
+    assert "/work/Foo/scene.py" in uploaded_paths
 
 
 async def test_render_command_passes_tts_service_env(
