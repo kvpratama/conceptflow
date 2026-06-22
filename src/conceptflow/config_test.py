@@ -8,7 +8,12 @@ import pytest
 from langchain_core.language_models import BaseChatModel
 from pydantic import ValidationError
 
-from conceptflow.config import Settings, get_model, get_model_small, load_environment
+from conceptflow.config import (
+    Settings,
+    get_model,
+    get_model_small,
+    load_environment,
+)
 
 
 def test_default_modal_settings() -> None:
@@ -233,3 +238,63 @@ def test_tts_service_rejects_unknown_value(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("TTS_SERVICE", "elevenlabs")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)  # type: ignore
+
+
+def test_default_max_critique_rounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_critique_rounds defaults to 2."""
+    monkeypatch.delenv("MAX_CRITIQUE_ROUNDS", raising=False)
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.max_critique_rounds == 2
+
+
+def test_max_critique_rounds_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_critique_rounds can be overridden via the MAX_CRITIQUE_ROUNDS env var."""
+    monkeypatch.setenv("MAX_CRITIQUE_ROUNDS", "4")
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.max_critique_rounds == 4
+
+
+def test_max_critique_rounds_rejects_non_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_critique_rounds must be > 0."""
+    monkeypatch.setenv("MAX_CRITIQUE_ROUNDS", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore
+
+
+def test_critique_model_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """critique_model is unset by default (falls back to the main model)."""
+    monkeypatch.delenv("CRITIQUE_MODEL", raising=False)
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.critique_model is None
+
+
+def test_get_critique_model_falls_back_to_main_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When critique_model is unset, get_critique_model builds the main model id."""
+    from conceptflow import config
+
+    captured: dict[str, str] = {}
+
+    def fake_build(settings: Settings, model_id: str) -> object:
+        captured["model_id"] = model_id
+        return object()
+
+    monkeypatch.setattr(config, "_build_model", fake_build)
+    s = Settings(_env_file=None, model="anthropic:main", critique_model=None)  # type: ignore
+    config.get_critique_model(s)
+    assert captured["model_id"] == "anthropic:main"
+
+
+def test_get_critique_model_uses_override_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When critique_model is set, get_critique_model builds that id instead."""
+    from conceptflow import config
+
+    captured: dict[str, str] = {}
+
+    def fake_build(settings: Settings, model_id: str) -> object:
+        captured["model_id"] = model_id
+        return object()
+
+    monkeypatch.setattr(config, "_build_model", fake_build)
+    s = Settings(_env_file=None, model="anthropic:main", critique_model="openai:vision")  # type: ignore
+    config.get_critique_model(s)
+    assert captured["model_id"] == "openai:vision"

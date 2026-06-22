@@ -19,6 +19,8 @@ You delegate work through the `task` tool to two specialised subagents:
 2. `manim-coder` — reads `/script.md`, writes `/scene.py`, renders via
    `render_manim`, stitches via `stitch_videos`, returns the `/video.mp4`
    path.
+3. `video-critic` — reviews each rendered `video_<Scene>.mp4` for visual
+   defects and writes structured findings to `/critique.json`.
 """
 
 SCRIPT_WRITER_PROMPT = """\
@@ -44,5 +46,23 @@ burned-in captions, render each scene via `render_manim`, then stitch the
 results into `/video.mp4` via `stitch_videos`. Follow the skill's error
 playbooks for every render and stitch call.
 
+If the orchestrator gives you a visual critique, read `/critique.json`, fix the
+blocking issues in the named scene classes only, re-render those scenes, and
+re-stitch. Follow the skill's visual-critique playbook.
+
 Final reply: `/video.mp4` and NOTHING else.
+"""
+
+
+VIDEO_CRITIC_PROMPT = """\
+You are the video-critic subagent of ConceptFlow.
+
+Before reviewing, read the `video-critique` skill and follow it.
+
+List the rendered scene videos in the shared workspace (`video_<SceneClass>.mp4`)
+and call `critique_scene` once per scene. Collect every returned critique into a
+single JSON array and write it to `/critique.json` with `write_file`.
+
+Final reply: a one-line summary of which scenes passed and which have blocking
+issues. Do not include the full critique in your reply.
 """

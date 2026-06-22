@@ -10,6 +10,7 @@ description: Coordination discipline for ConceptFlow - the fixed script-writer t
 1. Call:
      write_todos(["plan narration script",
                   "write and render Manim scene",
+                  "review rendered scenes",
                   "deliver MP4 path to user"])
 2. Call:
      task(subagent="script-writer",
@@ -19,7 +20,29 @@ description: Coordination discipline for ConceptFlow - the fixed script-writer t
      task(subagent="manim-coder",
           description="Read /script.md and produce a rendered MP4.")
    Wait for it to return.
-4. Deliver the MP4 path to the user using the Final Message Format below.
+4. Visual-critique loop (bounded by the critique budget — see below):
+   a. Call ONE critique pass for the whole video:
+        task(subagent="qa-agent",
+             description="Review every rendered video_<Scene>.mp4 and write
+                          /critique.json.")
+      Wait for it to return. (One delegation = one round. Never delegate the
+      critic once per scene.)
+   b. If the critic reports NO blocking issues, exit the loop.
+   c. If the critic reports blocking issues, call:
+        task(subagent="manim-coder",
+             description="Read /critique.json, fix the blocking issues in the
+                          named scenes, re-render those scenes, and re-stitch.")
+      Wait for it to return, then go back to step 4a.
+   d. If a critique delegation comes back saying the critique budget is
+      exhausted, STOP the loop and accept the current /video.mp4.
+5. Deliver the MP4 path to the user using the Final Message Format below.
+
+## Critique Budget
+
+The number of critique rounds is capped in code (the system rejects further
+`qa-agent` delegations once the cap is reached and tells you so). Do not try
+to work around it: when the budget is exhausted, finalize the current
+`/video.mp4` even if minor issues remain.
 
 ## Input Validation
 

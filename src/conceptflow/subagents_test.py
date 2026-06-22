@@ -6,11 +6,11 @@ from conceptflow import prompts
 from conceptflow.subagents import build_subagents
 
 
-def test_build_subagents_returns_two_entries():
+def test_build_subagents_returns_three_entries():
     subs = build_subagents()
-    assert len(subs) == 2
+    assert len(subs) == 3
     names = {s["name"] for s in subs}
-    assert names == {"script-writer", "manim-coder"}
+    assert names == {"script-writer", "manim-coder", "video-critic"}
 
 
 def test_script_writer_uses_correct_prompt_and_no_extra_tools():
@@ -72,3 +72,24 @@ def test_subagents_declare_namespace_scoped_skills() -> None:
     for name, spec in subs.items():
         for source in spec["skills"]:
             assert source == f"/skills/{name}/"
+
+
+def test_video_critic_includes_critique_tool_and_sandbox_middleware():
+    from langchain_core.tools import BaseTool
+
+    from conceptflow.critique import critique_scene
+    from conceptflow.sandbox_middleware import ManimSandboxMiddleware
+
+    subs = {s["name"]: s for s in build_subagents()}
+    vc = subs["video-critic"]
+    assert vc["system_prompt"] == prompts.VIDEO_CRITIC_PROMPT
+    tools = list(vc["tools"])
+    tool_names = {t.name for t in tools if isinstance(t, BaseTool)}
+    assert "critique_scene" in tool_names
+    assert critique_scene in tools
+    assert any(isinstance(mw, ManimSandboxMiddleware) for mw in vc.get("middleware", []))
+
+
+def test_video_critic_declares_namespace_scoped_skill():
+    subs = {s["name"]: s for s in build_subagents()}
+    assert subs["video-critic"]["skills"] == ["/skills/video-critic/"]

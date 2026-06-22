@@ -30,3 +30,14 @@ def test_prompts_reference_their_skills() -> None:
     assert "orchestrator-workflow" in prompts.ORCHESTRATOR_PROMPT
     assert "script-writing-3b1b" in prompts.SCRIPT_WRITER_PROMPT
     assert "manim-ce-coding" in prompts.MANIM_CODER_PROMPT
+
+
+def test_video_critic_prompt_references_tool_skill_and_file():
+    assert isinstance(prompts.VIDEO_CRITIC_PROMPT, str)
+    assert "critique_scene" in prompts.VIDEO_CRITIC_PROMPT
+    assert "/critique.json" in prompts.VIDEO_CRITIC_PROMPT
+    assert "video-critique" in prompts.VIDEO_CRITIC_PROMPT
+
+
+def test_orchestrator_prompt_mentions_video_critic():
+    assert "video-critic" in prompts.ORCHESTRATOR_PROMPT

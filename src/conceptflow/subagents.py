@@ -13,6 +13,7 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from conceptflow import prompts
 from conceptflow.config import get_settings
+from conceptflow.critique import critique_scene
 from conceptflow.render import render_manim, stitch_videos
 from conceptflow.sandbox_middleware import ManimSandboxMiddleware
 
@@ -21,11 +22,12 @@ def build_subagents() -> list[SubAgent]:
     """Return the list of subagents to register with the root deep agent.
 
     Returns:
-        A list of two `SubAgent` dicts:
+        A list of three `SubAgent` dicts:
 
         * ``"script-writer"`` — uses only the built-in toolset
           (`write_file`, `read_file`, etc.).
         * ``"manim-coder"`` — built-ins plus the custom `render_manim` tool.
+        * ``"video-critic"`` — built-ins plus the custom `critique_scene` tool.
     """
     max_render_attempts = get_settings().max_render_attempts
     return [
@@ -55,5 +57,23 @@ def build_subagents() -> list[SubAgent]:
                 )
             ],
             skills=["/skills/manim-coder/"],
+        ),
+        SubAgent(
+            name="video-critic",
+            description=(
+                "Review each rendered video_<Scene>.mp4 for visual defects "
+                "(off-screen mobjects, caption overflow/overlap, blank frames) "
+                "via critique_scene, and write structured findings to "
+                "/critique.json."
+            ),
+            system_prompt=prompts.VIDEO_CRITIC_PROMPT,
+            tools=[critique_scene],
+            middleware=[
+                cast(
+                    AgentMiddleware[AgentState[Any], None, Any],
+                    ManimSandboxMiddleware(),
+                )
+            ],
+            skills=["/skills/video-critic/"],
         ),
     ]

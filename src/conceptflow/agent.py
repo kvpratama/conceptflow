@@ -22,6 +22,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 from conceptflow.config import get_model, get_model_small, get_settings, load_environment
+from conceptflow.critique_middleware import CritiqueBudgetMiddleware
 from conceptflow.paths import out_dir_from_config, skills_dir
 from conceptflow.prompts import ORCHESTRATOR_PROMPT
 from conceptflow.subagents import build_subagents
@@ -65,6 +66,7 @@ async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
         await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
 
         base_middleware: list[AgentMiddleware] = [
+            CritiqueBudgetMiddleware(),
             ModelRetryMiddleware(
                 max_retries=_settings.retry_max_retries,
                 backoff_factor=_settings.retry_backoff_factor,
