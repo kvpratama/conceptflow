@@ -32,12 +32,14 @@ def test_prompts_reference_their_skills() -> None:
     assert "manim-ce-coding" in prompts.MANIM_CODER_PROMPT
 
 
-def test_qa_agent_prompt_references_tool_skill_and_file():
+def test_qa_agent_prompt_references_tool_skill_and_file() -> None:
+    """Assert the QA agent prompt references its tool, skill, and output file."""
     assert isinstance(prompts.QA_AGENT_PROMPT, str)
     assert "qa_scene" in prompts.QA_AGENT_PROMPT
     assert "/qa.json" in prompts.QA_AGENT_PROMPT
     assert "qa-review" in prompts.QA_AGENT_PROMPT
 
 
-def test_orchestrator_prompt_mentions_video_critic():
+def test_orchestrator_prompt_mentions_video_critic() -> None:
+    """Assert the orchestrator prompt mentions the QA agent."""
     assert "qa-agent" in prompts.ORCHESTRATOR_PROMPT

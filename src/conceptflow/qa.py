@@ -297,7 +297,14 @@ async def qa_scene(
             ),
         }
 
-    video_bytes = await asyncio.to_thread(video_path.read_bytes)
+    try:
+        video_bytes = await asyncio.to_thread(video_path.read_bytes)
+    except OSError as exc:
+        return {
+            "ok": False,
+            "kind": "infra",
+            "message": f"Failed to read video_{scene_class}.mp4 at {video_path}: {exc}",
+        }
     extraction = await asyncio.to_thread(
         _extract_frames_blocking,
         video_bytes=video_bytes,
