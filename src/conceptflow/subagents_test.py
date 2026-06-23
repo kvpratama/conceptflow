@@ -74,10 +74,10 @@ def test_subagents_declare_namespace_scoped_skills() -> None:
             assert source == f"/skills/{name}/"
 
 
-def test_video_critic_includes_critique_tool_and_sandbox_middleware():
+def test_qa_agent_includes_qa_tool_and_sandbox_middleware():
     from langchain_core.tools import BaseTool
 
-    from conceptflow.critique import critique_scene
+    from conceptflow.qa import qa_scene
     from conceptflow.sandbox_middleware import ManimSandboxMiddleware
 
     subs = {s["name"]: s for s in build_subagents()}
@@ -85,8 +85,8 @@ def test_video_critic_includes_critique_tool_and_sandbox_middleware():
     assert vc["system_prompt"] == prompts.QA_AGENT_PROMPT
     tools = list(vc["tools"])
     tool_names = {t.name for t in tools if isinstance(t, BaseTool)}
-    assert "critique_scene" in tool_names
-    assert critique_scene in tools
+    assert "qa_scene" in tool_names
+    assert qa_scene in tools
     assert any(isinstance(mw, ManimSandboxMiddleware) for mw in vc.get("middleware", []))
 
 

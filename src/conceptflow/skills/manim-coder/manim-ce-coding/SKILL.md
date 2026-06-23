@@ -139,10 +139,10 @@ budget for Scene2.
   -> return message verbatim and STOP. Do NOT retry.
 
 
-## Visual-Critique Playbook
+## QA Playbook
 
-When the orchestrator asks you to act on a visual critique, read `/critique.json`
-(a JSON array of per-scene critiques). For each scene with `passed: false`, fix
+When the orchestrator asks you to act on a QA report, read `/qa.json`
+(a JSON array of per-scene results). For each scene with `passed: false`, fix
 ONLY that scene's class, then re-render it and re-stitch.
 
 Map each issue `category` to a fix:

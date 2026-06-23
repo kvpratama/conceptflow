@@ -147,12 +147,12 @@ def test_build_subagents_is_called_by_agent_module() -> None:
     assert {s["name"] for s in subs} == {"script-writer", "manim-coder", "qa-agent"}
 
 
-async def test_execution_graph_includes_critique_budget_middleware(
+async def test_execution_graph_includes_qa_budget_middleware(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Execution mode wires CritiqueBudgetMiddleware into the orchestrator."""
+    """Execution mode wires QABudgetMiddleware into the orchestrator."""
     from conceptflow import agent, paths
-    from conceptflow.critique_middleware import CritiqueBudgetMiddleware
+    from conceptflow.qa_middleware import QABudgetMiddleware
 
     monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
 
@@ -171,4 +171,4 @@ async def test_execution_graph_includes_critique_budget_middleware(
     from typing import cast
 
     middleware = cast(list, captured["middleware"])
-    assert any(isinstance(m, CritiqueBudgetMiddleware) for m in middleware)
+    assert any(isinstance(m, QABudgetMiddleware) for m in middleware)

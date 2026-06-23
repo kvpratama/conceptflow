@@ -20,7 +20,7 @@ You delegate work through the `task` tool to three specialised subagents:
    `render_manim`, stitches via `stitch_videos`, returns the `/video.mp4`
    path.
 3. `qa-agent` — reviews each rendered `video_<Scene>.mp4` for visual
-   defects and writes structured findings to `/critique.json`.
+   defects and writes structured findings to `/qa.json`.
 """
 
 SCRIPT_WRITER_PROMPT = """\
@@ -46,9 +46,9 @@ burned-in captions, render each scene via `render_manim`, then stitch the
 results into `/video.mp4` via `stitch_videos`. Follow the skill's error
 playbooks for every render and stitch call.
 
-If the orchestrator gives you a visual critique, read `/critique.json`, fix the
+If the orchestrator gives you a QA report, read `/qa.json`, fix the
 blocking issues in the named scene classes only, re-render those scenes, and
-re-stitch. Follow the skill's visual-critique playbook.
+re-stitch. Follow the skill's QA playbook.
 
 Final reply: `/video.mp4` and NOTHING else.
 """
@@ -60,9 +60,9 @@ You are the qa-agent subagent of ConceptFlow.
 Before reviewing, read the `qa-review` skill and follow it.
 
 List the rendered scene videos in the shared workspace (`video_<SceneClass>.mp4`)
-and call `critique_scene` once per scene. Collect every returned critique into a
-single JSON array and write it to `/critique.json` with `write_file`.
+and call `qa_scene` once per scene. Collect every returned QA result into a
+single JSON array and write it to `/qa.json` with `write_file`.
 
 Final reply: a one-line summary of which scenes passed and which have blocking
-issues. Do not include the full critique in your reply.
+issues. Do not include the full QA report in your reply.
 """

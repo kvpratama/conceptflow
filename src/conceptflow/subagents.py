@@ -13,7 +13,7 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from conceptflow import prompts
 from conceptflow.config import get_settings
-from conceptflow.critique import critique_scene
+from conceptflow.qa import qa_scene
 from conceptflow.render import render_manim, stitch_videos
 from conceptflow.sandbox_middleware import ManimSandboxMiddleware
 
@@ -27,7 +27,7 @@ def build_subagents() -> list[SubAgent]:
         * ``"script-writer"`` — uses only the built-in toolset
           (`write_file`, `read_file`, etc.).
         * ``"manim-coder"`` — built-ins plus the custom `render_manim` tool.
-        * ``"qa-agent"`` — built-ins plus the custom `critique_scene` tool.
+        * ``"qa-agent"`` — built-ins plus the custom `qa_scene` tool.
     """
     max_render_attempts = get_settings().max_render_attempts
     return [
@@ -63,11 +63,11 @@ def build_subagents() -> list[SubAgent]:
             description=(
                 "Review each rendered video_<Scene>.mp4 for visual defects "
                 "(off-screen mobjects, caption overflow/overlap, blank frames) "
-                "via critique_scene, and write structured findings to "
-                "/critique.json."
+                "via qa_scene, and write structured findings to "
+                "/qa.json."
             ),
             system_prompt=prompts.QA_AGENT_PROMPT,
-            tools=[critique_scene],
+            tools=[qa_scene],
             middleware=[
                 cast(
                     AgentMiddleware[AgentState[Any], None, Any],

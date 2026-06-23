@@ -32,10 +32,10 @@ def test_prompts_reference_their_skills() -> None:
     assert "manim-ce-coding" in prompts.MANIM_CODER_PROMPT
 
 
-def test_video_critic_prompt_references_tool_skill_and_file():
+def test_qa_agent_prompt_references_tool_skill_and_file():
     assert isinstance(prompts.QA_AGENT_PROMPT, str)
-    assert "critique_scene" in prompts.QA_AGENT_PROMPT
-    assert "/critique.json" in prompts.QA_AGENT_PROMPT
+    assert "qa_scene" in prompts.QA_AGENT_PROMPT
+    assert "/qa.json" in prompts.QA_AGENT_PROMPT
     assert "qa-review" in prompts.QA_AGENT_PROMPT
 
 

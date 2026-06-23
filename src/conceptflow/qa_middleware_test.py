@@ -1,4 +1,4 @@
-"""Unit tests for CritiqueBudgetMiddleware (orchestrator round budget)."""
+"""Unit tests for QABudgetMiddleware (orchestrator round budget)."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
-from conceptflow.critique_middleware import CritiqueBudgetMiddleware
+from conceptflow.qa_middleware import QABudgetMiddleware
 
 
-def _critic_delegation(call_id: str) -> tuple[AIMessage, ToolMessage]:
+def _qa_delegation(call_id: str) -> tuple[AIMessage, ToolMessage]:
     """An AIMessage delegating to qa-agent + its completion ToolMessage."""
     ai = AIMessage(
         content="",
@@ -29,7 +29,7 @@ def _critic_delegation(call_id: str) -> tuple[AIMessage, ToolMessage]:
     return ai, done
 
 
-def _new_critic_request(messages: list) -> SimpleNamespace:
+def _new_qa_request(messages: list) -> SimpleNamespace:
     """A request object representing a NEW qa-agent task call."""
     return SimpleNamespace(
         tool_call={
@@ -42,37 +42,31 @@ def _new_critic_request(messages: list) -> SimpleNamespace:
 
 
 async def test_passes_through_when_under_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    from conceptflow import critique_middleware
+    from conceptflow import qa_middleware
 
-    monkeypatch.setattr(
-        critique_middleware, "get_settings", lambda: SimpleNamespace(max_critique_rounds=2)
-    )
-    mw = CritiqueBudgetMiddleware()
+    monkeypatch.setattr(qa_middleware, "get_settings", lambda: SimpleNamespace(max_qa_rounds=2))
+    mw = QABudgetMiddleware()
     handler = AsyncMock(
         return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
     )
 
-    ai1, done1 = _critic_delegation("c1")  # 1 prior completed round
-    result = await mw.awrap_tool_call(cast(Any, _new_critic_request([ai1, done1])), handler)
+    ai1, done1 = _qa_delegation("c1")  # 1 prior completed round
+    result = await mw.awrap_tool_call(cast(Any, _new_qa_request([ai1, done1])), handler)
 
     handler.assert_awaited_once()
     assert result.content == "ran"
 
 
 async def test_short_circuits_at_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    from conceptflow import critique_middleware
+    from conceptflow import qa_middleware
 
-    monkeypatch.setattr(
-        critique_middleware, "get_settings", lambda: SimpleNamespace(max_critique_rounds=2)
-    )
-    mw = CritiqueBudgetMiddleware()
+    monkeypatch.setattr(qa_middleware, "get_settings", lambda: SimpleNamespace(max_qa_rounds=2))
+    mw = QABudgetMiddleware()
     handler = AsyncMock()
 
-    ai1, done1 = _critic_delegation("c1")
-    ai2, done2 = _critic_delegation("c2")  # 2 prior completed rounds == cap
-    result = await mw.awrap_tool_call(
-        cast(Any, _new_critic_request([ai1, done1, ai2, done2])), handler
-    )
+    ai1, done1 = _qa_delegation("c1")
+    ai2, done2 = _qa_delegation("c2")  # 2 prior completed rounds == cap
+    result = await mw.awrap_tool_call(cast(Any, _new_qa_request([ai1, done1, ai2, done2])), handler)
 
     handler.assert_not_awaited()
     assert isinstance(result, ToolMessage)
@@ -81,13 +75,11 @@ async def test_short_circuits_at_budget(monkeypatch: pytest.MonkeyPatch) -> None
     assert "budget exhausted" in result.content.lower()
 
 
-async def test_ignores_non_critic_task_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    from conceptflow import critique_middleware
+async def test_ignores_non_qa_task_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    from conceptflow import qa_middleware
 
-    monkeypatch.setattr(
-        critique_middleware, "get_settings", lambda: SimpleNamespace(max_critique_rounds=1)
-    )
-    mw = CritiqueBudgetMiddleware()
+    monkeypatch.setattr(qa_middleware, "get_settings", lambda: SimpleNamespace(max_qa_rounds=1))
+    mw = QABudgetMiddleware()
     handler = AsyncMock(return_value=ToolMessage(content="ran", name="task", tool_call_id="x"))
 
     request = SimpleNamespace(
@@ -103,12 +95,10 @@ async def test_ignores_non_critic_task_calls(monkeypatch: pytest.MonkeyPatch) ->
 
 
 async def test_ignores_non_task_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    from conceptflow import critique_middleware
+    from conceptflow import qa_middleware
 
-    monkeypatch.setattr(
-        critique_middleware, "get_settings", lambda: SimpleNamespace(max_critique_rounds=0)
-    )
-    mw = CritiqueBudgetMiddleware()
+    monkeypatch.setattr(qa_middleware, "get_settings", lambda: SimpleNamespace(max_qa_rounds=0))
+    mw = QABudgetMiddleware()
     handler = AsyncMock(
         return_value=ToolMessage(content="ran", name="write_file", tool_call_id="w")
     )

@@ -1,10 +1,10 @@
-"""Vision-LLM critique of rendered Manim scenes for ConceptFlow.
+"""Vision-LLM QA review of rendered Manim scenes for ConceptFlow.
 
-`critique_scene` uploads a rendered ``video_<SceneClass>.mp4`` to the reused
+`qa_scene` uploads a rendered ``video_<SceneClass>.mp4`` to the reused
 Modal render sandbox, extracts a handful of evenly-spaced frames with ffmpeg,
 and asks a multimodal model to flag the most common 3Blue1Brown-style visual
 defects: off-screen mobjects, caption overflow/overlap, and blank frames. The
-model returns a structured ``SceneCritique`` so the manim-coder subagent can act
+model returns a structured ``SceneQA`` so the manim-coder subagent can act
 on it.
 """
 
@@ -24,11 +24,11 @@ from langchain_modal import ModalSandbox
 from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, Field
 
-from conceptflow.config import get_critique_model, get_settings
+from conceptflow.config import get_qa_model, get_settings
 from conceptflow.paths import out_dir_from_config
 from conceptflow.render import _RENDER_TIMEOUT_SECONDS, _resolve_sandbox
 
-# Number of evenly-spaced frames sampled per scene for the vision critique.
+# Number of evenly-spaced frames sampled per scene for the vision QA review.
 _FRAME_SAMPLE_COUNT: int = 5
 
 # Downscale width (px) for sampled frames to bound vision-token cost.
@@ -36,7 +36,7 @@ _FRAME_WIDTH: int = 640
 
 _SCENE_CLASS_RE: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-_CRITIQUE_SYSTEM_PROMPT: str = (
+_QA_SYSTEM_PROMPT: str = (
     "You are a strict visual reviewer for 3Blue1Brown-style explainer animations. "
     "You are shown several evenly-spaced frames sampled from a single rendered scene. "
     "Identify ONLY clear, visible defects in these categories: "
@@ -50,7 +50,7 @@ _CRITIQUE_SYSTEM_PROMPT: str = (
 )
 
 
-class CritiqueIssue(BaseModel):
+class QAIssue(BaseModel):
     """A single visual defect found in a rendered scene."""
 
     category: Literal[
@@ -71,14 +71,12 @@ class CritiqueIssue(BaseModel):
     suggestion: str = Field(description="An actionable fix for the manim-coder.")
 
 
-class SceneCritique(BaseModel):
-    """The visual critique for one rendered scene."""
+class SceneQA(BaseModel):
+    """The QA review result for one rendered scene."""
 
     scene_class: str = Field(description="The Scene subclass name that was reviewed.")
     passed: bool = Field(description="True when the scene has no blocking issues.")
-    issues: list[CritiqueIssue] = Field(
-        default_factory=list, description="All visual defects found."
-    )
+    issues: list[QAIssue] = Field(default_factory=list, description="All visual defects found.")
 
 
 def _parse_duration(output: str) -> float | None:
@@ -116,8 +114,8 @@ def _extract_frames_blocking(
         frame_count: Number of evenly-spaced frames to sample.
 
     Returns:
-        On success: {"ok": True, "frames": list[bytes]}.
-        On failure: {"ok": False, "kind": "infra", "message": str}.
+        On success: {\"ok\": True, \"frames\": list[bytes]}.
+        On failure: {\"ok\": False, \"kind\": \"infra\", \"message\": str}.
     """
     try:
         settings = get_settings()
@@ -130,7 +128,7 @@ def _extract_frames_blocking(
         }
 
     try:
-        work_dir = f"/work/critique_{scene_class}"
+        work_dir = f"/work/qa_{scene_class}"
         video_path = f"{work_dir}/video.mp4"
         sandbox = ModalSandbox(sandbox=modal_sb)
 
@@ -139,7 +137,7 @@ def _extract_frames_blocking(
             return {
                 "ok": False,
                 "kind": "infra",
-                "message": f"Failed to create critique work dir {work_dir}:\n{mkdir.output}",
+                "message": f"Failed to create QA work dir {work_dir}:\n{mkdir.output}",
             }
 
         sandbox.upload_files([(video_path, video_bytes)])
@@ -201,7 +199,7 @@ def _extract_frames_blocking(
         return {
             "ok": False,
             "kind": "infra",
-            "message": f"Modal sandbox error during critique: {exc!s}",
+            "message": f"Modal sandbox error during QA review: {exc!s}",
         }
     finally:
         if owned:
@@ -211,15 +209,15 @@ def _extract_frames_blocking(
                 pass
 
 
-async def _critique_frames(scene_class: str, frames: list[bytes]) -> SceneCritique:
-    """Ask the vision model to critique sampled frames, returning a SceneCritique.
+async def _qa_frames(scene_class: str, frames: list[bytes]) -> SceneQA:
+    """Ask the vision model to review sampled frames, returning a SceneQA.
 
     Args:
         scene_class: The Scene subclass name under review.
         frames: PNG-encoded sampled frames, in temporal order.
 
     Returns:
-        A SceneCritique whose ``scene_class`` is forced to ``scene_class`` and
+        A SceneQA whose ``scene_class`` is forced to ``scene_class`` and
         whose ``passed`` is recomputed from the presence of blocking issues.
     """
     content: list[Any] = [
@@ -235,27 +233,27 @@ async def _critique_frames(scene_class: str, frames: list[bytes]) -> SceneCritiq
         b64 = base64.b64encode(png).decode("ascii")
         content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
 
-    model = get_critique_model().with_structured_output(SceneCritique)
-    critique = cast(
-        SceneCritique,
+    model = get_qa_model().with_structured_output(SceneQA)
+    result = cast(
+        SceneQA,
         await model.ainvoke(
-            [SystemMessage(content=_CRITIQUE_SYSTEM_PROMPT), HumanMessage(content=content)]
+            [SystemMessage(content=_QA_SYSTEM_PROMPT), HumanMessage(content=content)]
         ),
     )
 
     # Guarantee correctness regardless of what the model returned.
-    critique.scene_class = scene_class
-    critique.passed = not any(issue.severity == "blocking" for issue in critique.issues)
-    return critique
+    result.scene_class = scene_class
+    result.passed = not any(issue.severity == "blocking" for issue in result.issues)
+    return result
 
 
 @tool
-async def critique_scene(
+async def qa_scene(
     scene_class: str,
     state: Annotated[dict[str, Any], InjectedState],
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    """Critique a rendered scene's visuals and return structured findings.
+    """Review a rendered scene's visuals and return structured QA findings.
 
     Samples evenly-spaced frames from ``video_<scene_class>.mp4`` and asks a
     multimodal model to flag off-screen mobjects, caption overflow/overlap, and
@@ -267,7 +265,7 @@ async def critique_scene(
     Returns:
         On success::
 
-            {"ok": True, "critique": <SceneCritique dict>}
+            {"ok": True, "qa": <SceneQA dict>}
 
         On a bad scene_class or missing video::
 
@@ -295,7 +293,7 @@ async def critique_scene(
             "kind": "logic",
             "message": (
                 f"video_{scene_class}.mp4 not found at {video_path}. Render the scene "
-                "before critiquing it."
+                "before reviewing it."
             ),
         }
 
@@ -310,5 +308,5 @@ async def critique_scene(
     if not extraction["ok"]:
         return extraction
 
-    critique = await _critique_frames(scene_class, extraction["frames"])
-    return {"ok": True, "critique": critique.model_dump()}
+    qa = await _qa_frames(scene_class, extraction["frames"])
+    return {"ok": True, "qa": qa.model_dump()}
