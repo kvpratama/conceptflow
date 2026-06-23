@@ -144,7 +144,7 @@ def test_build_subagents_is_called_by_agent_module() -> None:
     from conceptflow.subagents import build_subagents
 
     subs = build_subagents()
-    assert {s["name"] for s in subs} == {"script-writer", "manim-coder", "video-critic"}
+    assert {s["name"] for s in subs} == {"script-writer", "manim-coder", "qa-agent"}
 
 
 async def test_execution_graph_includes_critique_budget_middleware(

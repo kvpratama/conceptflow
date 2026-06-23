@@ -13,13 +13,13 @@ from conceptflow.critique_middleware import CritiqueBudgetMiddleware
 
 
 def _critic_delegation(call_id: str) -> tuple[AIMessage, ToolMessage]:
-    """An AIMessage delegating to video-critic + its completion ToolMessage."""
+    """An AIMessage delegating to qa-agent + its completion ToolMessage."""
     ai = AIMessage(
         content="",
         tool_calls=[
             {
                 "name": "task",
-                "args": {"subagent_type": "video-critic", "description": "review scenes"},
+                "args": {"subagent_type": "qa-agent", "description": "review scenes"},
                 "id": call_id,
                 "type": "tool_call",
             }
@@ -30,11 +30,11 @@ def _critic_delegation(call_id: str) -> tuple[AIMessage, ToolMessage]:
 
 
 def _new_critic_request(messages: list) -> SimpleNamespace:
-    """A request object representing a NEW video-critic task call."""
+    """A request object representing a NEW qa-agent task call."""
     return SimpleNamespace(
         tool_call={
             "name": "task",
-            "args": {"subagent_type": "video-critic", "description": "review"},
+            "args": {"subagent_type": "qa-agent", "description": "review"},
             "id": "new-call",
         },
         state={"messages": messages},

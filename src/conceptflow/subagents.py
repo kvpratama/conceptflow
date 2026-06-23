@@ -27,7 +27,7 @@ def build_subagents() -> list[SubAgent]:
         * ``"script-writer"`` — uses only the built-in toolset
           (`write_file`, `read_file`, etc.).
         * ``"manim-coder"`` — built-ins plus the custom `render_manim` tool.
-        * ``"video-critic"`` — built-ins plus the custom `critique_scene` tool.
+        * ``"qa-agent"`` — built-ins plus the custom `critique_scene` tool.
     """
     max_render_attempts = get_settings().max_render_attempts
     return [
@@ -59,14 +59,14 @@ def build_subagents() -> list[SubAgent]:
             skills=["/skills/manim-coder/"],
         ),
         SubAgent(
-            name="video-critic",
+            name="qa-agent",
             description=(
                 "Review each rendered video_<Scene>.mp4 for visual defects "
                 "(off-screen mobjects, caption overflow/overlap, blank frames) "
                 "via critique_scene, and write structured findings to "
                 "/critique.json."
             ),
-            system_prompt=prompts.VIDEO_CRITIC_PROMPT,
+            system_prompt=prompts.QA_AGENT_PROMPT,
             tools=[critique_scene],
             middleware=[
                 cast(
@@ -74,6 +74,6 @@ def build_subagents() -> list[SubAgent]:
                     ManimSandboxMiddleware(),
                 )
             ],
-            skills=["/skills/video-critic/"],
+            skills=["/skills/qa-agent/"],
         ),
     ]

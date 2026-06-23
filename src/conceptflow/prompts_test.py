@@ -33,11 +33,11 @@ def test_prompts_reference_their_skills() -> None:
 
 
 def test_video_critic_prompt_references_tool_skill_and_file():
-    assert isinstance(prompts.VIDEO_CRITIC_PROMPT, str)
-    assert "critique_scene" in prompts.VIDEO_CRITIC_PROMPT
-    assert "/critique.json" in prompts.VIDEO_CRITIC_PROMPT
-    assert "video-critique" in prompts.VIDEO_CRITIC_PROMPT
+    assert isinstance(prompts.QA_AGENT_PROMPT, str)
+    assert "critique_scene" in prompts.QA_AGENT_PROMPT
+    assert "/critique.json" in prompts.QA_AGENT_PROMPT
+    assert "qa-review" in prompts.QA_AGENT_PROMPT
 
 
 def test_orchestrator_prompt_mentions_video_critic():
-    assert "video-critic" in prompts.ORCHESTRATOR_PROMPT
+    assert "qa-agent" in prompts.ORCHESTRATOR_PROMPT

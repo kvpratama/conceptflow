@@ -1,11 +1,11 @@
 """Orchestrator middleware that bounds the visual-critique correction loop.
 
 The visual-critique loop is orchestrator-mediated: the root agent delegates a
-critique pass to the ``video-critic`` subagent, relays blocking findings to
+critique pass to the ``qa-agent`` subagent, relays blocking findings to
 ``manim-coder``, and repeats. Because each delegation spawns a fresh, stateless
 subagent, the round budget cannot live in subagent state. Instead this
 middleware enforces it at the orchestrator, where the message history is durable
-and checkpointed: it counts completed ``task(subagent_type="video-critic")``
+and checkpointed: it counts completed ``task(subagent_type="qa-agent")``
 delegations and short-circuits further ones once ``max_critique_rounds`` is hit.
 """
 
@@ -20,20 +20,20 @@ from langgraph.types import Command
 
 from conceptflow.config import get_settings
 
-_VIDEO_CRITIC = "video-critic"
+_QA_AGENT = "qa-agent"
 
 
 def _count_prior_critique_delegations(state: dict[str, Any]) -> int:
-    """Count completed ``task`` delegations to the video-critic subagent.
+    """Count completed ``task`` delegations to the qa-agent subagent.
 
-    Correlates each video-critic ``task`` tool call with its completion
+    Correlates each qa-agent ``task`` tool call with its completion
     ToolMessage so only finished critique rounds are counted.
 
     Args:
         state: The orchestrator's agent state.
 
     Returns:
-        The number of completed video-critic critique rounds.
+        The number of completed qa-agent critique rounds.
     """
     messages = state.get("messages") or []
 
@@ -44,7 +44,7 @@ def _count_prior_critique_delegations(state: dict[str, Any]) -> int:
                 if (
                     isinstance(tc, dict)
                     and tc.get("name") == "task"
-                    and tc.get("args", {}).get("subagent_type") == _VIDEO_CRITIC
+                    and tc.get("args", {}).get("subagent_type") == _QA_AGENT
                 ):
                     critic_ids.add(tc["id"])
 
@@ -56,14 +56,14 @@ def _count_prior_critique_delegations(state: dict[str, Any]) -> int:
 
 
 class CritiqueBudgetMiddleware(AgentMiddleware):
-    """Short-circuit video-critic delegations once the round budget is spent."""
+    """Short-circuit qa-agent delegations once the round budget is spent."""
 
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        """Enforce ``max_critique_rounds`` on video-critic task delegations.
+        """Enforce ``max_critique_rounds`` on qa-agent task delegations.
 
         Args:
             request: The intercepted tool call (with ``tool_call`` and ``state``).
@@ -76,7 +76,7 @@ class CritiqueBudgetMiddleware(AgentMiddleware):
         tool_call = request.tool_call
         is_critic_task = (
             tool_call.get("name") == "task"
-            and tool_call.get("args", {}).get("subagent_type") == _VIDEO_CRITIC
+            and tool_call.get("args", {}).get("subagent_type") == _QA_AGENT
         )
         if is_critic_task:
             max_rounds = get_settings().max_critique_rounds

@@ -10,7 +10,7 @@ def test_build_subagents_returns_three_entries():
     subs = build_subagents()
     assert len(subs) == 3
     names = {s["name"] for s in subs}
-    assert names == {"script-writer", "manim-coder", "video-critic"}
+    assert names == {"script-writer", "manim-coder", "qa-agent"}
 
 
 def test_script_writer_uses_correct_prompt_and_no_extra_tools():
@@ -81,8 +81,8 @@ def test_video_critic_includes_critique_tool_and_sandbox_middleware():
     from conceptflow.sandbox_middleware import ManimSandboxMiddleware
 
     subs = {s["name"]: s for s in build_subagents()}
-    vc = subs["video-critic"]
-    assert vc["system_prompt"] == prompts.VIDEO_CRITIC_PROMPT
+    vc = subs["qa-agent"]
+    assert vc["system_prompt"] == prompts.QA_AGENT_PROMPT
     tools = list(vc["tools"])
     tool_names = {t.name for t in tools if isinstance(t, BaseTool)}
     assert "critique_scene" in tool_names
@@ -92,4 +92,4 @@ def test_video_critic_includes_critique_tool_and_sandbox_middleware():
 
 def test_video_critic_declares_namespace_scoped_skill():
     subs = {s["name"]: s for s in build_subagents()}
-    assert subs["video-critic"]["skills"] == ["/skills/video-critic/"]
+    assert subs["qa-agent"]["skills"] == ["/skills/qa-agent/"]
