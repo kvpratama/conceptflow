@@ -82,7 +82,7 @@ class Settings(BaseSettings):
             needs internet) and falls back to ``"pyttsx3"`` (offline espeak)
             when gTTS is unreachable. ``"pyttsx3"`` forces the offline engine.
         max_qa_rounds: Maximum number of QA rounds the orchestrator may run
-            per video. Enforced in code by CritiqueBudgetMiddleware, not
+            per video. Enforced in code by QABudgetMiddleware, not
             merely advised in the prompt.
         qa_model: Optional model identifier for the qa-agent. When unset,
             the qa-agent reuses the primary ``model``.
