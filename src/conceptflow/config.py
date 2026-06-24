@@ -81,6 +81,11 @@ class Settings(BaseSettings):
             ``"gtts"`` (default) uses Google Translate TTS (free, no key,
             needs internet) and falls back to ``"pyttsx3"`` (offline espeak)
             when gTTS is unreachable. ``"pyttsx3"`` forces the offline engine.
+        max_qa_rounds: Maximum number of QA rounds the orchestrator may run
+            per video. Enforced in code by QABudgetMiddleware, not
+            merely advised in the prompt.
+        qa_model: Optional model identifier for the qa-agent. When unset,
+            the qa-agent reuses the primary ``model``.
         retry_max_retries: Maximum number of retries for ModelRetryMiddleware.
         retry_backoff_factor: Exponential backoff factor for ModelRetryMiddleware.
         retry_initial_delay: Initial delay (seconds) for ModelRetryMiddleware.
@@ -101,6 +106,8 @@ class Settings(BaseSettings):
     modal_sandbox_timeout: int = 60 * 30
     max_render_attempts: int = Field(default=3, gt=0)
     tts_service: Literal["gtts", "pyttsx3"] = "gtts"
+    max_qa_rounds: int = Field(default=2, gt=0)
+    qa_model: str | None = None
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0
@@ -164,3 +171,19 @@ def get_model_small(settings: Settings | None = None) -> BaseChatModel:
     if settings is None:
         settings = get_settings()
     return _build_model(settings, settings.model_small)
+
+
+def get_qa_model(settings: Settings | None = None) -> BaseChatModel:
+    """Build the multimodal model used by the qa-agent.
+
+    Args:
+        settings: Optional Settings instance. If None, calls get_settings().
+
+    Returns:
+        A configured BaseChatModel. Uses ``qa_model`` when set, otherwise
+        falls back to the primary ``model``.
+    """
+    if settings is None:
+        settings = get_settings()
+    model_id = settings.qa_model or settings.model
+    return _build_model(settings, model_id)

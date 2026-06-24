@@ -6,6 +6,7 @@ These tests build the graph but never invoke a real LLM.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from langgraph.graph.state import CompiledStateGraph
@@ -143,4 +144,31 @@ def test_build_subagents_is_called_by_agent_module() -> None:
     from conceptflow.subagents import build_subagents
 
     subs = build_subagents()
-    assert {s["name"] for s in subs} == {"script-writer", "manim-coder"}
+    assert {s["name"] for s in subs} == {"script-writer", "manim-coder", "qa-agent"}
+
+
+async def test_execution_graph_includes_qa_budget_middleware(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Execution mode wires QABudgetMiddleware into the orchestrator."""
+    from conceptflow import agent, paths
+    from conceptflow.qa_middleware import QABudgetMiddleware
+
+    monkeypatch.setattr(paths, "_OUTPUTS_ROOT", tmp_path / "outputs")
+
+    captured: dict[str, object] = {}
+
+    def fake_create_deep_agent(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return MagicMock(spec=CompiledStateGraph)
+
+    monkeypatch.setattr(agent, "create_deep_agent", fake_create_deep_agent)
+
+    await agent.make_graph(
+        config={"configurable": {"thread_id": "t1", "__is_for_execution__": True}}
+    )
+
+    from typing import cast
+
+    middleware = cast(list, captured["middleware"])
+    assert any(isinstance(m, QABudgetMiddleware) for m in middleware)

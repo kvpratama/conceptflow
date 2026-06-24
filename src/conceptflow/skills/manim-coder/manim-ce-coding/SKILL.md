@@ -137,3 +137,38 @@ budget for Scene2.
 
   ok=False, kind="infra"
   -> return message verbatim and STOP. Do NOT retry.
+
+
+## QA Playbook
+
+When the orchestrator asks you to act on a QA report, read `/qa.json`
+(a JSON array of per-scene results). For each scene with `passed: false`, fix
+ONLY that scene's class, then re-render it and re-stitch.
+
+Map each issue `category` to a fix:
+
+  caption_overflow
+  -> ensure the caption is built via `make_caption(...)` so it is width-fitted;
+     split long narration into multiple shorter `self.voiceover` blocks.
+
+  caption_overlap
+  -> `self.remove(...)` the previous caption before showing the next; keep the
+     caption at `.to_edge(DOWN)` and move other mobjects clear of it.
+
+  offscreen_mobject
+  -> reposition with `.move_to`, `.shift`, `.next_to`, or scale down with
+     `.scale` / `.scale_to_fit_width(config.frame_width - 1)` so the element
+     stays inside the frame.
+
+  blank_frame
+  -> ensure something is on screen for the whole scene; add/extend animations or
+     hold a final state so no sampled frame is empty.
+
+  other
+  -> apply the issue's `suggestion`.
+
+Only `blocking` issues require a fix; `warning`s are advisory. After fixing,
+re-render each changed scene with `render_manim` and re-stitch with
+`stitch_videos`. Respect the per-scene render budget exactly as in the
+Render-Error Playbook.
+

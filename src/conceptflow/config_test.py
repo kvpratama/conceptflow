@@ -8,7 +8,12 @@ import pytest
 from langchain_core.language_models import BaseChatModel
 from pydantic import ValidationError
 
-from conceptflow.config import Settings, get_model, get_model_small, load_environment
+from conceptflow.config import (
+    Settings,
+    get_model,
+    get_model_small,
+    load_environment,
+)
 
 
 def test_default_modal_settings() -> None:
@@ -233,3 +238,63 @@ def test_tts_service_rejects_unknown_value(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("TTS_SERVICE", "elevenlabs")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)  # type: ignore
+
+
+def test_default_max_qa_rounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_qa_rounds defaults to 2."""
+    monkeypatch.delenv("MAX_QA_ROUNDS", raising=False)
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.max_qa_rounds == 2
+
+
+def test_max_qa_rounds_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_qa_rounds can be overridden via the MAX_QA_ROUNDS env var."""
+    monkeypatch.setenv("MAX_QA_ROUNDS", "4")
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.max_qa_rounds == 4
+
+
+def test_max_qa_rounds_rejects_non_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_qa_rounds must be > 0."""
+    monkeypatch.setenv("MAX_QA_ROUNDS", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore
+
+
+def test_qa_model_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """qa_model is unset by default (falls back to the main model)."""
+    monkeypatch.delenv("QA_MODEL", raising=False)
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.qa_model is None
+
+
+def test_get_qa_model_falls_back_to_main_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When qa_model is unset, get_qa_model builds the main model id."""
+    from conceptflow import config
+
+    captured: dict[str, str] = {}
+
+    def fake_build(settings: Settings, model_id: str) -> object:
+        captured["model_id"] = model_id
+        return object()
+
+    monkeypatch.setattr(config, "_build_model", fake_build)
+    s = Settings(_env_file=None, model="anthropic:main", qa_model=None)  # type: ignore
+    config.get_qa_model(s)
+    assert captured["model_id"] == "anthropic:main"
+
+
+def test_get_qa_model_uses_override_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When qa_model is set, get_qa_model builds that id instead."""
+    from conceptflow import config
+
+    captured: dict[str, str] = {}
+
+    def fake_build(settings: Settings, model_id: str) -> object:
+        captured["model_id"] = model_id
+        return object()
+
+    monkeypatch.setattr(config, "_build_model", fake_build)
+    s = Settings(_env_file=None, model="anthropic:main", qa_model="openai:vision")  # type: ignore
+    config.get_qa_model(s)
+    assert captured["model_id"] == "openai:vision"
