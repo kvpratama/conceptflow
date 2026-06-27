@@ -86,6 +86,11 @@ class Settings(BaseSettings):
             merely advised in the prompt.
         qa_model: Optional model identifier for the qa-agent. When unset,
             the qa-agent reuses the primary ``model``.
+        max_research_searches: Maximum number of search-tool calls the
+            research-agent may make per run. Enforced in code by
+            ResearchBudgetMiddleware, not merely advised in the prompt.
+        research_model: Optional model identifier for the research-agent.
+            When unset, the research-agent reuses the primary ``model``.
         retry_max_retries: Maximum number of retries for ModelRetryMiddleware.
         retry_backoff_factor: Exponential backoff factor for ModelRetryMiddleware.
         retry_initial_delay: Initial delay (seconds) for ModelRetryMiddleware.
@@ -108,6 +113,8 @@ class Settings(BaseSettings):
     tts_service: Literal["gtts", "pyttsx3"] = "gtts"
     max_qa_rounds: int = Field(default=2, gt=0)
     qa_model: str | None = None
+    max_research_searches: int = Field(default=5, gt=0)
+    research_model: str | None = None
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0
@@ -186,4 +193,20 @@ def get_qa_model(settings: Settings | None = None) -> BaseChatModel:
     if settings is None:
         settings = get_settings()
     model_id = settings.qa_model or settings.model
+    return _build_model(settings, model_id)
+
+
+def get_research_model(settings: Settings | None = None) -> BaseChatModel:
+    """Build the model used by the research-agent.
+
+    Args:
+        settings: Optional Settings instance. If None, calls get_settings().
+
+    Returns:
+        A configured BaseChatModel. Uses ``research_model`` when set,
+        otherwise falls back to the primary ``model``.
+    """
+    if settings is None:
+        settings = get_settings()
+    model_id = settings.research_model or settings.model
     return _build_model(settings, model_id)

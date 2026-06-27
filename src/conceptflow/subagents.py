@@ -12,9 +12,11 @@ from deepagents import SubAgent
 from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from conceptflow import prompts
-from conceptflow.config import get_settings
+from conceptflow.config import get_research_model, get_settings
 from conceptflow.qa import qa_scene
 from conceptflow.render import render_manim, stitch_videos
+from conceptflow.research import build_research_tools
+from conceptflow.research_middleware import ResearchBudgetMiddleware
 from conceptflow.sandbox_middleware import ManimSandboxMiddleware
 
 
@@ -22,8 +24,10 @@ def build_subagents() -> list[SubAgent]:
     """Return the list of subagents to register with the root deep agent.
 
     Returns:
-        A list of three `SubAgent` dicts:
+        A list of four `SubAgent` dicts:
 
+        * ``"research-agent"`` — built-ins plus the in-process `tavily_search`
+          and `wikipedia` search tools.
         * ``"script-writer"`` — uses only the built-in toolset
           (`write_file`, `read_file`, etc.).
         * ``"manim-coder"`` — built-ins plus the custom `render_manim` tool.
@@ -31,6 +35,24 @@ def build_subagents() -> list[SubAgent]:
     """
     max_render_attempts = get_settings().max_render_attempts
     return [
+        SubAgent(
+            name="research-agent",
+            description=(
+                "Gather grounded facts, examples, analogies, and sources for a "
+                "user-supplied topic via web search (Tavily) and Wikipedia. "
+                "Persists the result to /research.md in the shared workspace."
+            ),
+            system_prompt=prompts.RESEARCH_AGENT_PROMPT,
+            model=get_research_model(),
+            tools=build_research_tools(),
+            middleware=[
+                cast(
+                    AgentMiddleware[AgentState[Any], None, Any],
+                    ResearchBudgetMiddleware(),
+                )
+            ],
+            skills=["/skills/research-agent/"],
+        ),
         SubAgent(
             name="script-writer",
             description=(
