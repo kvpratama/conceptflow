@@ -8,16 +8,52 @@ search tools the research-agent uses to gather grounded information:
 
 When ``TAVILY_API_KEY`` is absent the factory falls back to Wikipedia only, so
 the pipeline still runs without a Tavily account.
+
+The ``wikipedia`` tool wraps the standalone ``wikipedia`` PyPI package directly
+rather than ``langchain-community`` (which is sunset and unmaintained).
 """
 
 from __future__ import annotations
 
 import os
 
-from langchain_community.tools import WikipediaQueryRun
-from langchain_community.utilities import WikipediaAPIWrapper
-from langchain_core.tools import BaseTool
+import wikipedia
+from langchain_core.tools import BaseTool, tool
 from langchain_tavily import TavilySearch
+
+_WIKIPEDIA_MAX_QUERY_LENGTH = 300
+_WIKIPEDIA_TOP_K_RESULTS = 3
+_WIKIPEDIA_DOC_CONTENT_CHARS_MAX = 4000
+
+
+@tool("wikipedia")
+def search_wikipedia(query: str) -> str:
+    """Search Wikipedia for background on a topic.
+
+    Useful for definitions, history, and general facts about people, places,
+    concepts, and events. Returns formatted page summaries for the top
+    matching articles.
+
+    Args:
+        query: The search query.
+
+    Returns:
+        Newline-separated ``Page``/``Summary`` blocks for the top results, or a
+        message when nothing relevant is found.
+    """
+    page_titles = wikipedia.search(
+        query[:_WIKIPEDIA_MAX_QUERY_LENGTH], results=_WIKIPEDIA_TOP_K_RESULTS
+    )
+    summaries: list[str] = []
+    for page_title in page_titles[:_WIKIPEDIA_TOP_K_RESULTS]:
+        try:
+            page = wikipedia.page(title=page_title, auto_suggest=False)
+        except wikipedia.exceptions.PageError, wikipedia.exceptions.DisambiguationError:
+            continue
+        summaries.append(f"Page: {page_title}\nSummary: {page.summary}")
+    if not summaries:
+        return "No good Wikipedia Search Result was found"
+    return "\n\n".join(summaries)[:_WIKIPEDIA_DOC_CONTENT_CHARS_MAX]
 
 
 def build_research_tools() -> list[BaseTool]:
@@ -32,5 +68,5 @@ def build_research_tools() -> list[BaseTool]:
     tools: list[BaseTool] = []
     if os.environ.get("TAVILY_API_KEY"):
         tools.append(TavilySearch(max_results=5))
-    tools.append(WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper()))  # ty: ignore[missing-argument]
+    tools.append(search_wikipedia)
     return tools
