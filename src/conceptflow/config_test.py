@@ -298,3 +298,63 @@ def test_get_qa_model_uses_override_when_set(monkeypatch: pytest.MonkeyPatch) ->
     s = Settings(_env_file=None, model="anthropic:main", qa_model="openai:vision")  # type: ignore
     config.get_qa_model(s)
     assert captured["model_id"] == "openai:vision"
+
+
+def test_default_max_research_searches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_research_searches defaults to 5."""
+    monkeypatch.delenv("MAX_RESEARCH_SEARCHES", raising=False)
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.max_research_searches == 5
+
+
+def test_max_research_searches_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_research_searches can be overridden via the env var."""
+    monkeypatch.setenv("MAX_RESEARCH_SEARCHES", "8")
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.max_research_searches == 8
+
+
+def test_max_research_searches_rejects_non_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_research_searches must be > 0."""
+    monkeypatch.setenv("MAX_RESEARCH_SEARCHES", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore
+
+
+def test_research_model_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """research_model is unset by default (falls back to the main model)."""
+    monkeypatch.delenv("RESEARCH_MODEL", raising=False)
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.research_model is None
+
+
+def test_get_research_model_falls_back_to_main_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When research_model is unset, get_research_model builds the main model id."""
+    from conceptflow import config
+
+    captured: dict[str, str] = {}
+
+    def fake_build(settings: Settings, model_id: str) -> object:
+        captured["model_id"] = model_id
+        return object()
+
+    monkeypatch.setattr(config, "_build_model", fake_build)
+    s = Settings(_env_file=None, model="anthropic:main", research_model=None)  # type: ignore
+    config.get_research_model(s)
+    assert captured["model_id"] == "anthropic:main"
+
+
+def test_get_research_model_uses_override_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When research_model is set, get_research_model builds that id instead."""
+    from conceptflow import config
+
+    captured: dict[str, str] = {}
+
+    def fake_build(settings: Settings, model_id: str) -> object:
+        captured["model_id"] = model_id
+        return object()
+
+    monkeypatch.setattr(config, "_build_model", fake_build)
+    s = Settings(_env_file=None, model="anthropic:main", research_model="openai:cheap")  # type: ignore
+    config.get_research_model(s)
+    assert captured["model_id"] == "openai:cheap"

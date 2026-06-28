@@ -5,6 +5,15 @@ description: How to write a short 3Blue1Brown-style narration plus a single anim
 
 # Script Writing (3Blue1Brown Style)
 
+## Use Research If Present
+
+Before writing, check whether `/research.md` exists in the shared workspace
+(use `ls` / `read_file`). If it exists, read it and ground your narration in
+its `# Key Facts` and `# Examples & Analogies` sections — prefer the
+researched facts, numbers, and analogies over your own recall. Never copy
+`[n]` citation markers or the `# Sources` list into the narration. If
+`/research.md` does not exist, proceed using your own knowledge as usual.
+
 ## Scene Count Calibration
 
 Scale scenes to the topic's complexity:

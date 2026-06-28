@@ -8,19 +8,28 @@ description: Coordination discipline for ConceptFlow - the fixed script-writer t
 ## Pipeline (strict order)
 
 1. Call:
-     write_todos(["plan narration script",
+     write_todos(["research the topic",
+                  "plan narration script",
                   "write and render Manim scene",
                   "review rendered scenes",
                   "deliver MP4 path to user"])
 2. Call:
+     task(subagent="research-agent",
+          description="Research this topic and write /research.md: <user topic verbatim>")
+   Wait for it to return. If research-agent reports it could not gather
+   research, continue anyway — research is best-effort and the script-writer
+   works without it. A research-agent failure is the one exception to the
+   Error Surfacing rule below: never stop the pipeline for it; always
+   proceed to step 3.
+3. Call:
      task(subagent="script-writer",
           description="Create an explainer script for: <user topic verbatim>")
    Wait for it to return.
-3. Call:
+4. Call:
      task(subagent="manim-coder",
           description="Read /script.md and produce a rendered MP4.")
    Wait for it to return.
-4. QA loop (bounded by the QA budget — see below):
+5. QA loop (bounded by the QA budget — see below):
    a. Call ONE QA pass for the whole video:
         task(subagent="qa-agent",
              description="Review every rendered video_<Scene>.mp4 and write
@@ -32,10 +41,10 @@ description: Coordination discipline for ConceptFlow - the fixed script-writer t
         task(subagent="manim-coder",
              description="Read /qa.json, fix the blocking issues in the
                           named scenes, re-render those scenes, and re-stitch.")
-      Wait for it to return, then go back to step 4a.
+      Wait for it to return, then go back to step 5a.
    d. If a QA delegation comes back saying the QA budget is
       exhausted, STOP the loop and accept the current /video.mp4.
-5. Deliver the MP4 path to the user using the Final Message Format below.
+6. Deliver the MP4 path to the user using the Final Message Format below.
 
 ## QA Budget
 
@@ -71,6 +80,10 @@ reply, unedited. No summarising, no suggestions, no added context.
         <exact error output>
 
 Then stop. Do not continue the pipeline.
+
+Exception: `research-agent` is best-effort. Do NOT surface its failures or
+stop the pipeline when it fails — always continue to step 3 (script writing)
+as described in step 2 above.
 
 ## Final Message Format
 
