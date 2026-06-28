@@ -91,6 +91,9 @@ class Settings(BaseSettings):
             ResearchBudgetMiddleware, not merely advised in the prompt.
         research_model: Optional model identifier for the research-agent.
             When unset, the research-agent reuses the primary ``model``.
+        tavily_api_key: Optional Tavily web-search key for the research-agent.
+            When set, the research-agent gains the ``tavily_search`` tool;
+            when unset, it falls back to Wikipedia-only research.
         retry_max_retries: Maximum number of retries for ModelRetryMiddleware.
         retry_backoff_factor: Exponential backoff factor for ModelRetryMiddleware.
         retry_initial_delay: Initial delay (seconds) for ModelRetryMiddleware.
@@ -115,6 +118,7 @@ class Settings(BaseSettings):
     qa_model: str | None = None
     max_research_searches: int = Field(default=5, gt=0)
     research_model: str | None = None
+    tavily_api_key: SecretStr | None = None
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0

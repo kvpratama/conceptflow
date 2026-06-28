@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.tools import BaseTool
+from pydantic import SecretStr
 
 from conceptflow.research import build_research_tools
 
@@ -15,7 +16,9 @@ def _wikipedia_tool() -> BaseTool:
     return next(t for t in build_research_tools() if t.name == "wikipedia")
 
 
-def test_wikipedia_tool_returns_formatted_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wikipedia_tool_returns_formatted_summaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The wikipedia tool searches, fetches pages, and formats summaries."""
     from conceptflow import research
 
@@ -26,25 +29,27 @@ def test_wikipedia_tool_returns_formatted_summaries(monkeypatch: pytest.MonkeyPa
     }
     monkeypatch.setattr(research.wikipedia, "page", lambda title, auto_suggest: pages[title])
 
-    result = _wikipedia_tool().invoke({"query": "pi"})
+    result = await _wikipedia_tool().ainvoke({"query": "pi"})
 
     assert "Page: Pi" in result
     assert "Summary: Pi is a constant." in result
     assert "Page: Tau" in result
 
 
-def test_wikipedia_tool_handles_no_results(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wikipedia_tool_handles_no_results(monkeypatch: pytest.MonkeyPatch) -> None:
     """When search finds nothing, a clear message is returned."""
     from conceptflow import research
 
     monkeypatch.setattr(research.wikipedia, "search", lambda q, results: [])
 
-    result = _wikipedia_tool().invoke({"query": "asdfqwerty"})
+    result = await _wikipedia_tool().ainvoke({"query": "asdfqwerty"})
 
     assert result == "No good Wikipedia Search Result was found"
 
 
-def test_wikipedia_tool_skips_unresolvable_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wikipedia_tool_skips_unresolvable_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Pages raising PageError/DisambiguationError are skipped, not fatal."""
     from conceptflow import research
 
@@ -57,23 +62,31 @@ def test_wikipedia_tool_skips_unresolvable_pages(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(research.wikipedia, "page", fake_page)
 
-    result = _wikipedia_tool().invoke({"query": "x"})
+    result = await _wikipedia_tool().ainvoke({"query": "x"})
 
     assert "Bad" not in result
     assert "Summary: Good summary." in result
 
 
 def test_wikipedia_only_when_no_tavily_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without TAVILY_API_KEY the factory returns Wikipedia only."""
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    """Without a Tavily key in Settings the factory returns Wikipedia only."""
+    from conceptflow import research
+
+    monkeypatch.setattr(research, "get_settings", lambda: SimpleNamespace(tavily_api_key=None))
     tools = build_research_tools()
     names = {t.name for t in tools}
     assert names == {"wikipedia"}
 
 
 def test_includes_tavily_when_key_present(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With TAVILY_API_KEY set the factory returns both search tools."""
-    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+    """With a Tavily key in Settings the factory returns both search tools."""
+    from conceptflow import research
+
+    monkeypatch.setattr(
+        research,
+        "get_settings",
+        lambda: SimpleNamespace(tavily_api_key=SecretStr("test-key")),
+    )
     tools = build_research_tools()
     names = {t.name for t in tools}
     assert "tavily_search" in names

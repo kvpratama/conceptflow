@@ -18,7 +18,9 @@ description: Coordination discipline for ConceptFlow - the fixed script-writer t
           description="Research this topic and write /research.md: <user topic verbatim>")
    Wait for it to return. If research-agent reports it could not gather
    research, continue anyway — research is best-effort and the script-writer
-   works without it.
+   works without it. A research-agent failure is the one exception to the
+   Error Surfacing rule below: never stop the pipeline for it; always
+   proceed to step 3.
 3. Call:
      task(subagent="script-writer",
           description="Create an explainer script for: <user topic verbatim>")
@@ -78,6 +80,10 @@ reply, unedited. No summarising, no suggestions, no added context.
         <exact error output>
 
 Then stop. Do not continue the pipeline.
+
+Exception: `research-agent` is best-effort. Do NOT surface its failures or
+stop the pipeline when it fails — always continue to step 3 (script writing)
+as described in step 2 above.
 
 ## Final Message Format
 
