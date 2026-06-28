@@ -52,13 +52,17 @@ async def search_wikipedia(query: str) -> str:
     summaries: list[str] = []
     for page_title in page_titles[:_WIKIPEDIA_TOP_K_RESULTS]:
         try:
-            page = await asyncio.to_thread(wikipedia.page, title=page_title, auto_suggest=False)
+            summary = await asyncio.to_thread(
+                wikipedia.summary,
+                page_title,
+                auto_suggest=False,
+            )
         except (
             wikipedia.exceptions.PageError,
             wikipedia.exceptions.DisambiguationError,
         ):
             continue
-        summaries.append(f"Page: {page_title}\nSummary: {page.summary}")
+        summaries.append(f"Page: {page_title}\nSummary: {summary}")
     if not summaries:
         return "No good Wikipedia Search Result was found"
     return "\n\n".join(summaries)[:_WIKIPEDIA_DOC_CONTENT_CHARS_MAX]

@@ -23,11 +23,11 @@ async def test_wikipedia_tool_returns_formatted_summaries(
     from conceptflow import research
 
     monkeypatch.setattr(research.wikipedia, "search", lambda q, results: ["Pi", "Tau"])
-    pages = {
-        "Pi": SimpleNamespace(summary="Pi is a constant."),
-        "Tau": SimpleNamespace(summary="Tau is two pi."),
+    summaries = {
+        "Pi": "Pi is a constant.",
+        "Tau": "Tau is two pi.",
     }
-    monkeypatch.setattr(research.wikipedia, "page", lambda title, auto_suggest: pages[title])
+    monkeypatch.setattr(research.wikipedia, "summary", lambda title, auto_suggest: summaries[title])
 
     result = await _wikipedia_tool().ainvoke({"query": "pi"})
 
@@ -55,12 +55,12 @@ async def test_wikipedia_tool_skips_unresolvable_pages(
 
     monkeypatch.setattr(research.wikipedia, "search", lambda q, results: ["Bad", "Good"])
 
-    def fake_page(title: str, auto_suggest: bool) -> object:
+    def fake_summary(title: str, auto_suggest: bool) -> str:
         if title == "Bad":
             raise research.wikipedia.exceptions.PageError(title)
-        return SimpleNamespace(summary="Good summary.")
+        return "Good summary."
 
-    monkeypatch.setattr(research.wikipedia, "page", fake_page)
+    monkeypatch.setattr(research.wikipedia, "summary", fake_summary)
 
     result = await _wikipedia_tool().ainvoke({"query": "x"})
 
