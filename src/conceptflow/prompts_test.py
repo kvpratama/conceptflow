@@ -45,19 +45,23 @@ def test_orchestrator_prompt_mentions_video_critic() -> None:
     assert "qa-agent" in prompts.ORCHESTRATOR_PROMPT
 
 
-def test_research_agent_prompt_is_non_empty_string():
+def test_research_agent_prompt_is_non_empty_string() -> None:
+    """Assert the research-agent prompt is a non-trivial string."""
     assert isinstance(prompts.RESEARCH_AGENT_PROMPT, str)
     assert len(prompts.RESEARCH_AGENT_PROMPT) > 100
 
 
-def test_research_agent_prompt_references_skill_and_file():
+def test_research_agent_prompt_references_skill_and_file() -> None:
+    """Assert the research-agent prompt references its skill and output file."""
     assert "research-method" in prompts.RESEARCH_AGENT_PROMPT
     assert "/research.md" in prompts.RESEARCH_AGENT_PROMPT
 
 
-def test_orchestrator_prompt_mentions_research_agent():
+def test_orchestrator_prompt_mentions_research_agent() -> None:
+    """Assert the orchestrator prompt mentions the research-agent."""
     assert "research-agent" in prompts.ORCHESTRATOR_PROMPT
 
 
-def test_script_writer_prompt_references_research_md():
+def test_script_writer_prompt_references_research_md() -> None:
+    """Assert the script-writer prompt references the research output file."""
     assert "/research.md" in prompts.SCRIPT_WRITER_PROMPT

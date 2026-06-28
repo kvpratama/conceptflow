@@ -6,14 +6,16 @@ from conceptflow import prompts
 from conceptflow.subagents import build_subagents
 
 
-def test_build_subagents_returns_four_entries():
+def test_build_subagents_returns_four_entries() -> None:
+    """Assert build_subagents returns the four expected named subagents."""
     subs = build_subagents()
     assert len(subs) == 4
     names = {s["name"] for s in subs}
     assert names == {"research-agent", "script-writer", "manim-coder", "qa-agent"}
 
 
-def test_research_agent_includes_search_tools_and_budget_middleware():
+def test_research_agent_includes_search_tools_and_budget_middleware() -> None:
+    """Assert research-agent has search tools and the budget middleware."""
     from langchain_core.tools import BaseTool
 
     from conceptflow.research_middleware import ResearchBudgetMiddleware
@@ -28,12 +30,14 @@ def test_research_agent_includes_search_tools_and_budget_middleware():
     assert any(isinstance(mw, ResearchBudgetMiddleware) for mw in ra.get("middleware", []))
 
 
-def test_research_agent_declares_namespace_scoped_skill():
+def test_research_agent_declares_namespace_scoped_skill() -> None:
+    """Assert research-agent only sees its own skill namespace."""
     subs = {s["name"]: s for s in build_subagents()}
     assert subs["research-agent"]["skills"] == ["/skills/research-agent/"]
 
 
-def test_research_agent_has_no_sandbox_middleware():
+def test_research_agent_has_no_sandbox_middleware() -> None:
+    """Assert research-agent does not provision render sandbox middleware."""
     from conceptflow.sandbox_middleware import ManimSandboxMiddleware
 
     subs = {s["name"]: s for s in build_subagents()}
