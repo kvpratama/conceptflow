@@ -9,7 +9,7 @@ lightweight schema-only graph for Studio introspection.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
@@ -22,6 +22,8 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 from conceptflow.config import get_model, get_model_small, get_settings, load_environment
+from conceptflow.input_moderation_middleware import InputModerationMiddleware
+from conceptflow.output_moderation_middleware import OutputModerationMiddleware
 from conceptflow.paths import out_dir_from_config, skills_dir
 from conceptflow.prompts import ORCHESTRATOR_PROMPT
 from conceptflow.qa_middleware import QABudgetMiddleware
@@ -65,15 +67,24 @@ async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
         out_dir = out_dir_from_config(config)
         await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
 
-        base_middleware: list[AgentMiddleware] = [
-            QABudgetMiddleware(),
+        base_middleware: list[AgentMiddleware] = []
+        if _settings.safety_enabled:
+            base_middleware.append(InputModerationMiddleware())
+            base_middleware.append(
+                cast(
+                    AgentMiddleware,
+                    OutputModerationMiddleware(),
+                )
+            )
+        base_middleware.append(QABudgetMiddleware())
+        base_middleware.append(
             ModelRetryMiddleware(
                 max_retries=_settings.retry_max_retries,
                 backoff_factor=_settings.retry_backoff_factor,
                 initial_delay=_settings.retry_initial_delay,
-            ),
-            ModelFallbackMiddleware(get_model_small(_settings)),
-        ]
+            )
+        )
+        base_middleware.append(ModelFallbackMiddleware(get_model_small(_settings)))
 
         # FilesystemBackend.__init__ resolves root_dir, which makes blocking
         # os.getcwd/realpath calls; build both backends off the event loop.
