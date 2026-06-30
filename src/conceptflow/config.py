@@ -18,6 +18,7 @@ Examples (.env):
 from __future__ import annotations
 
 from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Literal
 
@@ -33,6 +34,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # read with explicit ordering.
 
 _PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
+
+
+def _default_wikipedia_user_agent() -> str:
+    """Build the impersonal default MediaWiki ``User-Agent``.
+
+    Identifies the tool by name and installed version (e.g.
+    ``ConceptFlow/0.1.0``) with no personal contact. Operators running at
+    volume should set ``WIKIPEDIA_USER_AGENT`` with a contact URL/email per
+    Wikimedia's API policy.
+
+    Returns:
+        A ``"ConceptFlow/<version>"`` string, falling back to ``"unknown"``
+        when package metadata is unavailable (e.g. running from source).
+    """
+    try:
+        return f"ConceptFlow/{version('conceptflow')}"
+    except PackageNotFoundError:
+        return "ConceptFlow/unknown"
 
 
 def load_environment() -> None:
@@ -94,6 +113,11 @@ class Settings(BaseSettings):
         tavily_api_key: Optional Tavily web-search key for the research-agent.
             When set, the research-agent gains the ``tavily_search`` tool;
             when unset, it falls back to Wikipedia-only research.
+        wikipedia_user_agent: ``User-Agent`` header sent to the MediaWiki API
+            by the ``wikipedia`` research tool. Defaults to an impersonal
+            ``ConceptFlow/<version>`` identifier. Wikimedia policy asks for a
+            contact URL/email for higher-volume use, so operators should
+            override this with their own contact info.
         retry_max_retries: Maximum number of retries for ModelRetryMiddleware.
         retry_backoff_factor: Exponential backoff factor for ModelRetryMiddleware.
         retry_initial_delay: Initial delay (seconds) for ModelRetryMiddleware.
@@ -119,6 +143,7 @@ class Settings(BaseSettings):
     max_research_searches: int = Field(default=5, gt=0)
     research_model: str | None = None
     tavily_api_key: SecretStr | None = None
+    wikipedia_user_agent: str = Field(default_factory=_default_wikipedia_user_agent)
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0

@@ -321,6 +321,22 @@ def test_max_research_searches_rejects_non_positive(monkeypatch: pytest.MonkeyPa
         Settings(_env_file=None)  # type: ignore
 
 
+def test_default_wikipedia_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """wikipedia_user_agent defaults to an impersonal app/version identifier."""
+    from importlib.metadata import version
+
+    monkeypatch.delenv("WIKIPEDIA_USER_AGENT", raising=False)
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.wikipedia_user_agent == f"ConceptFlow/{version('conceptflow')}"
+
+
+def test_wikipedia_user_agent_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """wikipedia_user_agent can be overridden via the env var."""
+    monkeypatch.setenv("WIKIPEDIA_USER_AGENT", "MyApp/2.0 (me@example.com)")
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.wikipedia_user_agent == "MyApp/2.0 (me@example.com)"
+
+
 def test_research_model_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """research_model is unset by default (falls back to the main model)."""
     monkeypatch.delenv("RESEARCH_MODEL", raising=False)
