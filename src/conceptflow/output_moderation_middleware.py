@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 from typing import Any, NotRequired
 
 from langchain.agents.middleware import (
@@ -93,17 +94,25 @@ def _count_prior_script_delegations(state: Mapping[str, Any]) -> int:
     )
 
 
+def _script_path() -> Path:
+    """Resolve the on-disk ``/script.md`` path for the active run.
+
+    Resolves the per-thread output directory from the active LangGraph run
+    config, mirroring how the render tool locates ``scene.py`` on disk.
+
+    Returns:
+        The absolute path to ``script.md`` in the run's output directory.
+    """
+    return out_dir_from_config(get_config()) / "script.md"
+
+
 async def _load_script_text() -> str | None:
     """Read ``/script.md`` from the per-thread output directory.
-
-    Resolves the output directory from the active LangGraph run config, mirroring
-    how the render tool locates ``scene.py`` on disk.
 
     Returns:
         The script text, or ``None`` when the file does not exist.
     """
-    out_dir = out_dir_from_config(get_config())
-    script_path = out_dir / "script.md"
+    script_path = _script_path()
 
     def _read() -> str | None:
         try:
@@ -112,6 +121,22 @@ async def _load_script_text() -> str | None:
             return None
 
     return await asyncio.to_thread(_read)
+
+
+async def _delete_script() -> None:
+    """Remove the on-disk ``/script.md`` so a regeneration can write a fresh file.
+
+    ``FilesystemBackend.write`` (backing the ``write_file`` tool) refuses to
+    overwrite an existing file, so the flagged script must be deleted before
+    ``script-writer`` is re-delegated; otherwise the regeneration's write fails
+    and moderation re-reads the same flagged content. Missing files are ignored.
+    """
+    script_path = _script_path()
+
+    def _unlink() -> None:
+        script_path.unlink(missing_ok=True)
+
+    await asyncio.to_thread(_unlink)
 
 
 class OutputModerationMiddleware(AgentMiddleware[OutputModerationState]):
@@ -190,7 +215,11 @@ class OutputModerationMiddleware(AgentMiddleware[OutputModerationState]):
                 },
             )
 
-        # First flag: instruct exactly one regeneration with the safety feedback.
+        # First flag: delete the flagged script so the re-delegated
+        # script-writer can write a fresh /script.md (the write_file tool
+        # refuses to overwrite an existing file), then instruct exactly one
+        # regeneration with the safety feedback.
+        await _delete_script()
         return ToolMessage(
             content=(
                 "The generated /script.md was flagged by the content-safety "

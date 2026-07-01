@@ -56,6 +56,8 @@ def _patch(
         "_load_script_text",
         AsyncMock(return_value=script),
     )
+    # Stub disk deletion so tests never resolve a real run config via get_config().
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", AsyncMock())
     moderate_mock = AsyncMock(return_value=verdict)
     monkeypatch.setattr(output_moderation_middleware, "moderate", moderate_mock)
     return moderate_mock
@@ -94,6 +96,62 @@ async def test_first_flag_requests_regeneration(monkeypatch: pytest.MonkeyPatch)
     assert result.tool_call_id == "new-call"
     assert "once more" in result.content
     assert "bomb how-to" in result.content
+
+
+async def test_first_flag_deletes_stale_script(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flagged /script.md is deleted so regeneration can write a fresh file."""
+    _patch(
+        monkeypatch,
+        script="unsafe script",
+        verdict=SafetyVerdict(allowed=False, categories=["weapons"], reason="bomb how-to"),
+    )
+    delete_mock = AsyncMock()
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", delete_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    delete_mock.assert_awaited_once()
+    assert isinstance(result, ToolMessage)
+    assert "once more" in result.content
+
+
+async def test_allowed_script_not_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An allowed script is never deleted."""
+    _patch(monkeypatch, script="safe script", verdict=SafetyVerdict(allowed=True))
+    delete_mock = AsyncMock()
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", delete_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    delete_mock.assert_not_awaited()
+
+
+async def test_second_flag_does_not_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On hard stop no regeneration follows, so the script is not deleted."""
+    _patch(
+        monkeypatch,
+        script="still unsafe",
+        verdict=SafetyVerdict(allowed=False, categories=["weapons"], reason="bomb how-to"),
+    )
+    delete_mock = AsyncMock()
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", delete_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    ai1, done1 = _script_delegation("c1")
+    await mw.awrap_tool_call(cast(Any, _new_script_request([ai1, done1])), handler)
+
+    delete_mock.assert_not_awaited()
 
 
 async def test_second_flag_hard_stops(monkeypatch: pytest.MonkeyPatch) -> None:
