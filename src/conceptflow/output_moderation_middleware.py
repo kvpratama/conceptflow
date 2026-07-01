@@ -34,7 +34,7 @@ from langgraph.config import get_config
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
-from conceptflow.moderation import moderate
+from conceptflow.moderation import MODERATION_ERROR_CATEGORY, moderate
 from conceptflow.paths import out_dir_from_config
 
 _SCRIPT_WRITER = "script-writer"
@@ -139,6 +139,28 @@ async def _delete_script() -> None:
     await asyncio.to_thread(_unlink)
 
 
+def _halt(tool_call_id: str | None, *, content: str) -> Command[Any]:
+    """Build a hard-stop Command that flags the run for termination.
+
+    Sets ``unsafe_script_halt`` so the ``before_model`` hook ends the run before
+    any further model call, and records a completion ToolMessage for the
+    intercepted ``task`` call.
+
+    Args:
+        tool_call_id: The intercepted ``task`` tool call id to complete.
+        content: The ToolMessage body explaining the halt.
+
+    Returns:
+        A :class:`Command` state update carrying the halt flag and message.
+    """
+    return Command(
+        update={
+            "unsafe_script_halt": True,
+            "messages": [ToolMessage(content=content, name="task", tool_call_id=tool_call_id)],
+        },
+    )
+
+
 class OutputModerationMiddleware(AgentMiddleware[OutputModerationState]):
     """Moderate the generated /script.md after each script-writer delegation."""
 
@@ -194,25 +216,31 @@ class OutputModerationMiddleware(AgentMiddleware[OutputModerationState]):
             return result
 
         detail = f" Reason: {verdict.reason}" if verdict.reason else ""
+
+        if MODERATION_ERROR_CATEGORY in verdict.categories:
+            # The judge itself failed (fail-closed). Regenerating the script
+            # cannot fix a broken judge and would send misleading "flagged"
+            # feedback to script-writer, so hard-stop immediately regardless of
+            # the regeneration budget.
+            return _halt(
+                tool_call["id"],
+                content=(
+                    "Content moderation could not be completed and failed closed."
+                    f"{detail} Halting; no video will be rendered."
+                ),
+            )
+
         prior = _count_prior_script_delegations(request.state)
         if prior >= 1:
             # Already regenerated once and still unsafe: flag for hard stop. The
             # before_model hook ends the run before manim-coder/render can run.
-            return Command(
-                update={
-                    "unsafe_script_halt": True,
-                    "messages": [
-                        ToolMessage(
-                            content=(
-                                "The regenerated script was flagged again by the "
-                                f"content-safety policy.{detail} Halting; no video "
-                                "will be rendered."
-                            ),
-                            name="task",
-                            tool_call_id=tool_call["id"],
-                        )
-                    ],
-                },
+            return _halt(
+                tool_call["id"],
+                content=(
+                    "The regenerated script was flagged again by the "
+                    f"content-safety policy.{detail} Halting; no video "
+                    "will be rendered."
+                ),
             )
 
         # First flag: delete the flagged script so the re-delegated

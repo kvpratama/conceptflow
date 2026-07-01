@@ -9,7 +9,7 @@ lightweight schema-only graph for Studio introspection.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
@@ -67,15 +67,10 @@ async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
         out_dir = out_dir_from_config(config)
         await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
 
-        base_middleware: list[AgentMiddleware] = []
+        base_middleware: list[AgentMiddleware[Any]] = []
         if _settings.safety_enabled:
             base_middleware.append(InputModerationMiddleware())
-            base_middleware.append(
-                cast(
-                    AgentMiddleware,
-                    OutputModerationMiddleware(),
-                )
-            )
+            base_middleware.append(OutputModerationMiddleware())
         base_middleware.append(QABudgetMiddleware())
         base_middleware.append(
             ModelRetryMiddleware(

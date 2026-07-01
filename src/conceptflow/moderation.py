@@ -22,6 +22,12 @@ from conceptflow.config import get_model_small
 
 Kind = Literal["input", "output"]
 
+#: Category label assigned when the judge itself fails (call error or invalid
+#: structured output). Distinguishes a fail-closed *judge failure* from a
+#: genuine content-policy match so callers can react differently (e.g. skip the
+#: bounded regeneration and hard-stop immediately).
+MODERATION_ERROR_CATEGORY = "moderation_error"
+
 
 class SafetyVerdict(BaseModel):
     """Structured moderation verdict returned by the judge model.
@@ -103,13 +109,13 @@ async def moderate(text: str, *, kind: Kind) -> SafetyVerdict:
     except Exception as exc:  # fail closed on any judge failure
         return SafetyVerdict(
             allowed=False,
-            categories=["moderation_error"],
+            categories=[MODERATION_ERROR_CATEGORY],
             reason=f"Moderation judge failed; failing closed: {exc!s}",
         )
     if not isinstance(verdict, SafetyVerdict):
         return SafetyVerdict(
             allowed=False,
-            categories=["moderation_error"],
+            categories=[MODERATION_ERROR_CATEGORY],
             reason="Moderation judge returned an unexpected payload; failing closed.",
         )
     return verdict

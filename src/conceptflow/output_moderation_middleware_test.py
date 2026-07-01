@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
 from conceptflow import output_moderation_middleware
-from conceptflow.moderation import SafetyVerdict
+from conceptflow.moderation import MODERATION_ERROR_CATEGORY, SafetyVerdict
 from conceptflow.output_moderation_middleware import OutputModerationMiddleware
 
 
@@ -175,6 +175,37 @@ async def test_second_flag_hard_stops(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(msg, ToolMessage)
     assert msg.tool_call_id == "new-call"
     assert "Halting" in msg.content
+
+
+async def test_judge_error_hard_stops_without_regeneration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A judge failure fails closed with an immediate hard stop (no regen)."""
+    _patch(
+        monkeypatch,
+        script="some script",
+        verdict=SafetyVerdict(
+            allowed=False,
+            categories=[MODERATION_ERROR_CATEGORY],
+            reason="judge down",
+        ),
+    )
+    delete_mock = AsyncMock()
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", delete_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    # No prior delegations: a content flag here would regenerate, but a judge
+    # error must hard-stop instead.
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    assert isinstance(result, Command)
+    update = cast(dict[str, Any], result.update)
+    assert update["unsafe_script_halt"] is True
+    assert "failed closed" in update["messages"][0].content
+    delete_mock.assert_not_awaited()
 
 
 async def test_before_model_halts_when_flagged() -> None:
