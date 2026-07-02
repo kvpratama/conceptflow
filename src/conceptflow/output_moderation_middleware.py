@@ -19,6 +19,7 @@ jump to the graph end) terminates the run before the next model call.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, NotRequired
@@ -29,13 +30,15 @@ from langchain.agents.middleware import (
     ToolCallRequest,
     hook_config,
 )
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.config import get_config
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from conceptflow.moderation import MODERATION_ERROR_CATEGORY, moderate
 from conceptflow.paths import out_dir_from_config
+
+_logger = logging.getLogger(__name__)
 
 _SCRIPT_WRITER = "script-writer"
 
@@ -67,18 +70,28 @@ def _is_script_writer_task(tool_call: Mapping[str, Any]) -> bool:
 
 
 def _count_prior_script_delegations(state: Mapping[str, Any]) -> int:
-    """Count completed ``task`` delegations to the script-writer subagent.
+    """Count completed script-writer delegations in the current user turn.
 
     Correlates each script-writer ``task`` tool call with its completion
-    ToolMessage so only finished delegations are counted.
+    ToolMessage so only finished delegations are counted, and scopes the walk to
+    the current turn (messages after the last :class:`HumanMessage`) so the
+    per-turn regeneration budget is not leaked across turns in a multi-turn
+    thread.
 
     Args:
         state: The orchestrator's agent state.
 
     Returns:
-        The number of completed script-writer delegations in the history.
+        The number of completed script-writer delegations in the current turn.
     """
     messages = state.get("messages") or []
+
+    # Scope to the current user turn: only messages after the last HumanMessage.
+    last_human = max(
+        (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)),
+        default=-1,
+    )
+    messages = messages[last_human + 1 :]
 
     script_ids: set[str] = set()
     for message in messages:
@@ -209,7 +222,17 @@ class OutputModerationMiddleware(AgentMiddleware[OutputModerationState]):
 
         script = await _load_script_text()
         if script is None:
-            return result
+            # A script-writer delegation is contractually required to produce
+            # /script.md. Its absence means moderation cannot run, so fail closed
+            # and hard-stop rather than letting the pipeline proceed unmoderated.
+            _logger.error("script-writer delegation produced no /script.md; failing closed.")
+            return _halt(
+                tool_call["id"],
+                content=(
+                    "The script-writer delegation did not produce a script, so "
+                    "content moderation could not run. Halting; no video will be rendered."
+                ),
+            )
 
         verdict = await moderate(script, kind="output")
         if verdict.allowed:

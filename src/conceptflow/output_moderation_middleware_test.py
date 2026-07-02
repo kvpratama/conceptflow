@@ -7,7 +7,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
 from conceptflow import output_moderation_middleware
@@ -177,6 +177,27 @@ async def test_second_flag_hard_stops(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Halting" in msg.content
 
 
+async def test_prior_turn_delegation_not_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(
+        monkeypatch,
+        script="unsafe",
+        verdict=SafetyVerdict(allowed=False, categories=["weapons"], reason="bomb how-to"),
+    )
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    # A completed delegation from a PRIOR user turn, then a new user turn begins.
+    ai_prev, done_prev = _script_delegation("prev")
+    messages = [ai_prev, done_prev, HumanMessage(content="new topic")]
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request(messages)), handler)
+
+    # First flag of the current turn: must request one regeneration, not halt.
+    assert isinstance(result, ToolMessage)
+    assert "Delegate to script-writer once more" in result.content
+
+
 async def test_judge_error_hard_stops_without_regeneration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -234,7 +255,7 @@ async def test_before_model_can_jump_to_end_declared() -> None:
     assert "end" in can_jump_to
 
 
-async def test_missing_script_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_missing_script_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     moderate_mock = _patch(monkeypatch, script=None, verdict=SafetyVerdict(allowed=True))
     mw = OutputModerationMiddleware()
     handler = AsyncMock(
@@ -243,9 +264,15 @@ async def test_missing_script_passes_through(monkeypatch: pytest.MonkeyPatch) ->
 
     result = await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
 
+    # No script means moderation cannot run: fail closed with a hard stop.
     moderate_mock.assert_not_awaited()
-    assert isinstance(result, ToolMessage)
-    assert result.content == "ran"
+    assert isinstance(result, Command)
+    update = cast(dict[str, Any], result.update)
+    assert update["unsafe_script_halt"] is True
+    msg = update["messages"][0]
+    assert isinstance(msg, ToolMessage)
+    assert msg.tool_call_id == "new-call"
+    assert "Halting" in msg.content
 
 
 async def test_non_script_writer_task_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
