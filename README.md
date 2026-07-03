@@ -5,18 +5,48 @@ system. A user provides a topic or question in plain language; ConceptFlow
 orchestrates specialized agents to produce a short animated explanatory video
 in the style of 3Blue1Brown.
 
-The current implementation is a proof of concept built with LangGraph and
-Deep Agents. The root agent delegates to:
+The implementation is built with LangGraph and Deep Agents. The root
+orchestrator delegates to four subagents in sequence, each persisting its
+output to a shared per-thread workspace:
 
-- `script-writer`, which creates a short narration and one-scene visual plan.
-- `manim-coder`, which writes a Manim CE scene, renders it in a Modal sandbox,
-  and saves the MP4 locally.
+- `research-agent`, which gathers grounded facts, examples, and sources via web
+  search (Tavily) and Wikipedia, writing `/research.md`. Without a Tavily key it
+  falls back to Wikipedia-only research.
+- `script-writer`, which turns the topic into a short narration and visual plan,
+  writing `/script.md`.
+- `manim-coder`, which writes `/scene.py` as a Manim CE module, renders it in a
+  Modal sandbox (with gTTS/pyttsx3 voiceover), and stitches per-scene clips into
+  the final video. It self-corrects on render errors.
+- `qa-agent`, which reviews each rendered scene with a vision model for visual
+  defects (off-screen mobjects, caption overflow/overlap, blank frames) and
+  writes structured findings to `/qa.json`.
 
-Rendered videos are written to:
+The pipeline is wrapped with LLM-as-judge content moderation of the input topic
+and generated script (enabled by default), a QA-round budget, model retry and
+fallback middleware, and per-subagent Modal sandbox lifecycle management. Each
+subagent is guided by a bundled agent skill (`SKILL.md`).
+
+Rendered videos and intermediate artifacts are written under:
 
 ```text
-./outputs/<thread_id>/video.mp4
+./outputs/<thread_id>/
 ```
+
+## Showcase
+
+Two example videos from the current pipeline (research-grounded, voiced, and
+QA-reviewed):
+
+**What is a neural network?**
+
+https://github.com/user-attachments/assets/26a368dc-5699-4272-89fd-0ae04a076331
+
+**What is a Fourier series?**
+
+https://github.com/user-attachments/assets/032ec67c-8cee-4502-b69a-9e822889ce2b
+
+See [SHOWCASE.md](./SHOWCASE.md) for how output quality evolved across
+milestones.
 
 ## Requirements
 
@@ -24,6 +54,8 @@ Rendered videos are written to:
 - `uv`
 - Modal credentials for rendering
 - At least one supported model provider API key: Anthropic, OpenAI, or Google
+- Optional: a Tavily API key for web-search research (falls back to
+  Wikipedia-only when absent)
 
 ## Setup
 
@@ -74,9 +106,20 @@ uv run ty check
 
 ```text
 src/conceptflow/
-|-- agent.py          # Root Deep Agents graph
-|-- config.py         # Settings and model factories
-|-- prompts.py        # Orchestrator and subagent prompts
-|-- render.py         # Modal-backed Manim render tool
-`-- subagents.py      # Subagent definitions
+|-- agent.py                          # Root Deep Agents graph (make_graph)
+|-- config.py                         # Settings and model factories
+|-- paths.py                          # Per-thread workspace/skills path helpers
+|-- prompts.py                        # Orchestrator and subagent prompts
+|-- subagents.py                      # Subagent definitions
+|-- render.py                         # Modal-backed Manim render + stitch tools
+|-- sandbox_middleware.py             # Per-subagent Modal sandbox lifecycle
+|-- sandbox_tts.py                    # In-sandbox gTTS/pyttsx3 voiceover helper
+|-- research.py                       # Tavily + Wikipedia research tools
+|-- research_middleware.py            # Research search-budget enforcement
+|-- qa.py                             # Vision-LLM scene QA tool
+|-- qa_middleware.py                  # QA-round budget enforcement
+|-- moderation.py                     # LLM-as-judge content moderation
+|-- input_moderation_middleware.py    # Moderates the input topic
+|-- output_moderation_middleware.py   # Moderates the generated script
+`-- skills/                           # Per-agent skill packages (SKILL.md)
 ```

@@ -23,6 +23,19 @@ def test_default_modal_settings() -> None:
     assert s.modal_sandbox_timeout == 60 * 30
 
 
+def test_safety_enabled_defaults_true() -> None:
+    """Content moderation is on by default."""
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.safety_enabled is True
+
+
+def test_safety_enabled_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """safety_enabled can be disabled via the SAFETY_ENABLED env var."""
+    monkeypatch.setenv("SAFETY_ENABLED", "false")
+    s = Settings(_env_file=None)  # type: ignore
+    assert s.safety_enabled is False
+
+
 def test_modal_settings_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Both settings can be overridden via environment variables."""
     monkeypatch.setenv("MODAL_APP_NAME", "custom-app")

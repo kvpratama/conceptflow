@@ -13,6 +13,10 @@ in the style of 3Blue1Brown.
 - **Orchestration**: [LangGraph](https://github.com/langchain-ai/langgraph) & [Deep Agents](https://github.com/langchain-ai/deepagents)
 - **Execution**: `langchain-modal` (`ModalSandbox`) for sandboxed shell execution in ephemeral Modal microVMs
 - **Models**: Anthropic (default), OpenAI, or Google GenAI via LangChain `init_chat_model`
+- **Research**: `langchain-tavily` for web search plus a direct MediaWiki (Wikipedia) client over `httpx`
+- **Safety**: LLM-as-judge input/output content moderation (reuses the "small" model)
+- **Voiceover**: `manim-voiceover` in-sandbox with gTTS-primary, pyttsx3-fallback
+- **Skills**: per-agent Deep Agents skill packages (`SKILL.md`) under `src/conceptflow/skills/`
 - **Environment**: `uv` for dependency management, `pydantic-settings` for configuration
 
 ---
@@ -21,28 +25,40 @@ in the style of 3Blue1Brown.
 
 ```text
 .
-|-- AGENTS.md                         # Agent-facing project instructions
-|-- README.md                         # Short project description
-|-- langgraph.json                    # LangGraph Studio/dev entrypoint
-|-- pyproject.toml                    # Project metadata, deps, tool config
-|-- uv.lock                           # Locked uv dependency graph
-|-- docs/superpowers/                 # Design specs and implementation plans
+|-- AGENTS.md                            # Agent-facing project instructions
+|-- README.md                            # Short project description
+|-- langgraph.json                       # LangGraph Studio/dev entrypoint
+|-- pyproject.toml                       # Project metadata, deps, tool config
+|-- uv.lock                              # Locked uv dependency graph
+|-- docs/superpowers/                    # Design specs and implementation plans
 |-- src/conceptflow/
-|   |-- agent.py                      # Root deep agent exported as `graph`
-|   |-- agent_test.py                 # Structural tests for root graph
-|   |-- config.py                     # Settings and model factories
-|   |-- config_test.py
-|   |-- prompts.py                    # Orchestrator/subagent system prompts
-|   |-- prompts_test.py
-|   |-- render.py                     # `render_manim` Modal sandbox tool
-|   |-- render_test.py
-|   |-- subagents.py                  # Deep Agents SubAgent definitions
-|   `-- subagents_test.py
-`-- outputs/                          # Generated rendered videos; not source
+|   |-- agent.py                         # Root deep agent (make_graph)
+|   |-- config.py                        # Settings and model factories
+|   |-- paths.py                         # Per-thread workspace/skills path helpers
+|   |-- prompts.py                       # Orchestrator/subagent system prompts
+|   |-- subagents.py                     # Deep Agents SubAgent definitions
+|   |-- render.py                        # render_manim + stitch_videos Modal tools
+|   |-- sandbox_middleware.py            # Per-subagent Modal sandbox lifecycle
+|   |-- sandbox_tts.py                   # In-sandbox gTTS/pyttsx3 voiceover helper
+|   |-- research.py                      # Tavily + Wikipedia research tools
+|   |-- research_middleware.py           # Research search-budget enforcement
+|   |-- qa.py                            # Vision-LLM scene QA tool
+|   |-- qa_middleware.py                 # QA-round budget enforcement
+|   |-- moderation.py                    # LLM-as-judge content moderation
+|   |-- input_moderation_middleware.py   # Moderates the input topic
+|   |-- output_moderation_middleware.py  # Moderates the generated script
+|   |-- skills/                          # Per-agent skill packages (SKILL.md)
+|   `-- *_test.py                        # Co-located tests for each module
+`-- outputs/                             # Generated rendered videos; not source
 ```
 
 `langgraph.json` exposes the graph named `conceptflow` from
 `./src/conceptflow/agent.py:make_graph`.
+
+The orchestrator runs four subagents in sequence over a shared per-thread
+workspace: `research-agent` (→ `/research.md`), `script-writer`
+(→ `/script.md`), `manim-coder` (→ `/scene.py`, renders and stitches the
+video), and `qa-agent` (→ `/qa.json`).
 
 Runtime/generated directories such as `outputs/`, `.langgraph_api/`,
 `.ruff_cache/`, `.pytest_cache/`, and `__pycache__/` are not source. Do not
@@ -92,7 +108,9 @@ uv add --dev <package>
 - Access config only through the `Settings` object in `config.py` (Pydantic `BaseSettings`).
 - Never hardcode secrets, API keys, or connection strings.
 - `.env.example` documents expected local variables, including model provider
-  keys, LangSmith settings, and Modal credentials.
+  keys, LangSmith settings, Modal credentials, the optional Tavily research key
+  (`TAVILY_API_KEY`), the Wikipedia `User-Agent`, TTS backend, and QA/research
+  budget and content-safety (`SAFETY_ENABLED`) toggles.
 
 ---
 

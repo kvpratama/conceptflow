@@ -121,6 +121,10 @@ class Settings(BaseSettings):
         retry_max_retries: Maximum number of retries for ModelRetryMiddleware.
         retry_backoff_factor: Exponential backoff factor for ModelRetryMiddleware.
         retry_initial_delay: Initial delay (seconds) for ModelRetryMiddleware.
+        safety_enabled: When True (default), the orchestrator runs LLM-as-judge
+            content moderation on the user's input topic and on the generated
+            ``/script.md`` before rendering. Set to False to disable both
+            checks (e.g. in trusted environments or tests).
     """
 
     model_config = SettingsConfigDict(
@@ -147,6 +151,7 @@ class Settings(BaseSettings):
     retry_max_retries: int = 5
     retry_backoff_factor: float = 2.0
     retry_initial_delay: float = 5.0
+    safety_enabled: bool = True
 
 
 @lru_cache

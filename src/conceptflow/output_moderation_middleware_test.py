@@ -1,0 +1,297 @@
+"""Unit tests for OutputModerationMiddleware (generated-script check)."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock
+
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.types import Command
+
+from conceptflow import output_moderation_middleware
+from conceptflow.moderation import MODERATION_ERROR_CATEGORY, SafetyVerdict
+from conceptflow.output_moderation_middleware import OutputModerationMiddleware
+
+
+def _script_delegation(call_id: str) -> tuple[AIMessage, ToolMessage]:
+    """An AIMessage delegating to script-writer + its completion ToolMessage."""
+    ai = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "task",
+                "args": {"subagent_type": "script-writer", "description": "write script"},
+                "id": call_id,
+                "type": "tool_call",
+            }
+        ],
+    )
+    done = ToolMessage(content="/script.md written", name="task", tool_call_id=call_id)
+    return ai, done
+
+
+def _new_script_request(messages: list[Any]) -> SimpleNamespace:
+    """A request object representing a NEW script-writer task call."""
+    return SimpleNamespace(
+        tool_call={
+            "name": "task",
+            "args": {"subagent_type": "script-writer", "description": "write script"},
+            "id": "new-call",
+        },
+        state={"messages": messages},
+    )
+
+
+def _patch(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    script: str | None,
+    verdict: SafetyVerdict,
+) -> AsyncMock:
+    """Patch script loading + moderation; return the moderate mock."""
+    monkeypatch.setattr(
+        output_moderation_middleware,
+        "_load_script_text",
+        AsyncMock(return_value=script),
+    )
+    # Stub disk deletion so tests never resolve a real run config via get_config().
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", AsyncMock())
+    moderate_mock = AsyncMock(return_value=verdict)
+    monkeypatch.setattr(output_moderation_middleware, "moderate", moderate_mock)
+    return moderate_mock
+
+
+async def test_allowed_script_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(monkeypatch, script="safe script", verdict=SafetyVerdict(allowed=True))
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    handler.assert_awaited_once()
+    assert isinstance(result, ToolMessage)
+    assert result.content == "ran"
+
+
+async def test_first_flag_requests_regeneration(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(
+        monkeypatch,
+        script="unsafe script",
+        verdict=SafetyVerdict(allowed=False, categories=["weapons"], reason="bomb how-to"),
+    )
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    # No prior completed script-writer delegations.
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    handler.assert_awaited_once()
+    assert isinstance(result, ToolMessage)
+    assert result.tool_call_id == "new-call"
+    assert "once more" in result.content
+    assert "bomb how-to" in result.content
+
+
+async def test_first_flag_deletes_stale_script(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flagged /script.md is deleted so regeneration can write a fresh file."""
+    _patch(
+        monkeypatch,
+        script="unsafe script",
+        verdict=SafetyVerdict(allowed=False, categories=["weapons"], reason="bomb how-to"),
+    )
+    delete_mock = AsyncMock()
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", delete_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    delete_mock.assert_awaited_once()
+    assert isinstance(result, ToolMessage)
+    assert "once more" in result.content
+
+
+async def test_allowed_script_not_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An allowed script is never deleted."""
+    _patch(monkeypatch, script="safe script", verdict=SafetyVerdict(allowed=True))
+    delete_mock = AsyncMock()
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", delete_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    delete_mock.assert_not_awaited()
+
+
+async def test_second_flag_does_not_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On hard stop no regeneration follows, so the script is not deleted."""
+    _patch(
+        monkeypatch,
+        script="still unsafe",
+        verdict=SafetyVerdict(allowed=False, categories=["weapons"], reason="bomb how-to"),
+    )
+    delete_mock = AsyncMock()
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", delete_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    ai1, done1 = _script_delegation("c1")
+    await mw.awrap_tool_call(cast(Any, _new_script_request([ai1, done1])), handler)
+
+    delete_mock.assert_not_awaited()
+
+
+async def test_second_flag_hard_stops(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(
+        monkeypatch,
+        script="still unsafe",
+        verdict=SafetyVerdict(allowed=False, categories=["weapons"], reason="bomb how-to"),
+    )
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    ai1, done1 = _script_delegation("c1")  # one prior completed delegation
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request([ai1, done1])), handler)
+
+    assert isinstance(result, Command)
+    update = cast(dict[str, Any], result.update)
+    assert update["unsafe_script_halt"] is True
+    msg = update["messages"][0]
+    assert isinstance(msg, ToolMessage)
+    assert msg.tool_call_id == "new-call"
+    assert "Halting" in msg.content
+
+
+async def test_prior_turn_delegation_not_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(
+        monkeypatch,
+        script="unsafe",
+        verdict=SafetyVerdict(allowed=False, categories=["weapons"], reason="bomb how-to"),
+    )
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    # A completed delegation from a PRIOR user turn, then a new user turn begins.
+    ai_prev, done_prev = _script_delegation("prev")
+    messages = [ai_prev, done_prev, HumanMessage(content="new topic")]
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request(messages)), handler)
+
+    # First flag of the current turn: must request one regeneration, not halt.
+    assert isinstance(result, ToolMessage)
+    assert "Delegate to script-writer once more" in result.content
+
+
+async def test_judge_error_hard_stops_without_regeneration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A judge failure fails closed with an immediate hard stop (no regen)."""
+    _patch(
+        monkeypatch,
+        script="some script",
+        verdict=SafetyVerdict(
+            allowed=False,
+            categories=[MODERATION_ERROR_CATEGORY],
+            reason="judge down",
+        ),
+    )
+    delete_mock = AsyncMock()
+    monkeypatch.setattr(output_moderation_middleware, "_delete_script", delete_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    # No prior delegations: a content flag here would regenerate, but a judge
+    # error must hard-stop instead.
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    assert isinstance(result, Command)
+    update = cast(dict[str, Any], result.update)
+    assert update["unsafe_script_halt"] is True
+    assert "failed closed" in update["messages"][0].content
+    delete_mock.assert_not_awaited()
+
+
+async def test_before_model_halts_when_flagged() -> None:
+    """The before_model hook jumps to end once the halt flag is set."""
+    mw = OutputModerationMiddleware()
+
+    result = await mw.abefore_model(cast(Any, {"unsafe_script_halt": True}), cast(Any, None))
+
+    assert result is not None
+    assert result["jump_to"] == "end"
+    assert isinstance(result["messages"][0], AIMessage)
+
+
+async def test_before_model_noop_without_flag() -> None:
+    """The before_model hook is a no-op on the normal path."""
+    mw = OutputModerationMiddleware()
+
+    result = await mw.abefore_model(cast(Any, {"messages": []}), cast(Any, None))
+
+    assert result is None
+
+
+async def test_before_model_can_jump_to_end_declared() -> None:
+    """The before_model hook must declare it can jump to end."""
+    can_jump_to = getattr(OutputModerationMiddleware.abefore_model, "__can_jump_to__", [])
+    assert "end" in can_jump_to
+
+
+async def test_missing_script_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    moderate_mock = _patch(monkeypatch, script=None, verdict=SafetyVerdict(allowed=True))
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(
+        return_value=ToolMessage(content="ran", name="task", tool_call_id="new-call")
+    )
+
+    result = await mw.awrap_tool_call(cast(Any, _new_script_request([])), handler)
+
+    # No script means moderation cannot run: fail closed with a hard stop.
+    moderate_mock.assert_not_awaited()
+    assert isinstance(result, Command)
+    update = cast(dict[str, Any], result.update)
+    assert update["unsafe_script_halt"] is True
+    msg = update["messages"][0]
+    assert isinstance(msg, ToolMessage)
+    assert msg.tool_call_id == "new-call"
+    assert "Halting" in msg.content
+
+
+async def test_non_script_writer_task_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    load_mock = AsyncMock(return_value="x")
+    monkeypatch.setattr(output_moderation_middleware, "_load_script_text", load_mock)
+    mw = OutputModerationMiddleware()
+    handler = AsyncMock(return_value=ToolMessage(content="ran", name="task", tool_call_id="x"))
+
+    request = SimpleNamespace(
+        tool_call={
+            "name": "task",
+            "args": {"subagent_type": "research-agent", "description": "research"},
+            "id": "x",
+        },
+        state={"messages": []},
+    )
+    result = await mw.awrap_tool_call(cast(Any, request), handler)
+
+    handler.assert_awaited_once()
+    load_mock.assert_not_awaited()
+    assert isinstance(result, ToolMessage)
+    assert result.content == "ran"
