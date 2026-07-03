@@ -5,20 +5,17 @@ two fixed prompts — *"What is a neural network?"* and *"What is a Fourier
 series?"* — were re-rendered at each milestone. The videos below show how output
 quality progressed as new capabilities landed.
 
-> **Note:** every video below is currently a placeholder using the #16 render.
-> Replace each `user-attachments` URL with the matching milestone's playable URL.
-
 ## [#2 Proof of concept](https://github.com/kvpratama/conceptflow/pull/2)
 
 Root agent + Manim render in a Modal sandbox; single monolithic video.
 
 **What is a neural network?**
 
-https://github.com/user-attachments/assets/214e4340-4018-4a0a-964f-265914d45090
+https://github.com/user-attachments/assets/b2c262e4-b2b3-4d0b-9ca7-6da9b245be3d
 
 **What is a Fourier series?**
 
-https://github.com/user-attachments/assets/b2c262e4-b2b3-4d0b-9ca7-6da9b245be3d
+https://github.com/user-attachments/assets/214e4340-4018-4a0a-964f-265914d45090
 
 ## [#4 Filesystem backend](https://github.com/kvpratama/conceptflow/pull/4)
 
