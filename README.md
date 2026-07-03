@@ -32,6 +32,22 @@ Rendered videos and intermediate artifacts are written under:
 ./outputs/<thread_id>/
 ```
 
+## Showcase
+
+Two example videos from the current pipeline (research-grounded, voiced, and
+QA-reviewed):
+
+**What is a neural network?**
+
+https://github.com/user-attachments/assets/26a368dc-5699-4272-89fd-0ae04a076331
+
+**What is a Fourier series?**
+
+https://github.com/user-attachments/assets/032ec67c-8cee-4502-b69a-9e822889ce2b
+
+See [SHOWCASE.md](./SHOWCASE.md) for how output quality evolved across
+milestones.
+
 ## Requirements
 
 - Python 3.14+
